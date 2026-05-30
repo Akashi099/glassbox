@@ -244,6 +244,10 @@ func (b *clientBuilder) validate() error {
 		b.network = Mainnet
 	}
 
+	if err := ValidateNetworkDiscovery(b.network, b.sorobanURL); err != nil {
+		return err
+	}
+
 	if b.horizonURL == "" && b.sorobanURL == "" {
 		b.horizonURL = b.getDefaultHorizonURL(b.network)
 	}

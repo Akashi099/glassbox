@@ -17,6 +17,21 @@ import (
 	"github.com/dotandev/glassbox/internal/snapshot"
 )
 
+// runDiff loads two snapshot files, computes their diff, and prints it.
+func runDiff(baseFile, targetFile string) {
+	base, err := snapshot.Load(baseFile)
+	if err != nil {
+		log.Fatalf("Failed to load base snapshot %q: %v", baseFile, err)
+	}
+	target, err := snapshot.Load(targetFile)
+	if err != nil {
+		log.Fatalf("Failed to load target snapshot %q: %v", targetFile, err)
+	}
+
+	diff := snapshot.DiffSnapshots(base, target)
+	fmt.Print(snapshot.FormatDiff(diff))
+}
+
 // GeneratorConfig holds configuration for XDR generation
 type GeneratorConfig struct {
 	Count      int64
@@ -142,12 +157,31 @@ func (eg *EntryGenerator) GenerateSnapshot() *snapshot.Snapshot {
 func main() {
 	config := &GeneratorConfig{}
 
+	var diffBase string
+	var diffTarget string
+
 	flag.Int64Var(&config.Count, "count", 1000000, "Number of XDR entries to generate")
 	flag.StringVar(&config.OutputFile, "output", "snapshot_1m.json", "Output snapshot file path")
 	flag.Int64Var(&config.SeedValue, "seed", time.Now().UnixNano(), "Random seed (informational only)")
 	flag.BoolVar(&config.Verbose, "verbose", true, "Print progress information")
+	flag.StringVar(&diffBase, "diff", "", "Compare two snapshots: path to the base snapshot file")
+	flag.StringVar(&diffTarget, "diff-target", "", "Path to the target snapshot file for --diff comparison")
 
 	flag.Parse()
+
+	// Diff mode: compare two existing snapshots.
+	if diffBase != "" {
+		if diffTarget == "" {
+			// Accept positional second argument as target when --diff-target is not set.
+			if flag.NArg() > 0 {
+				diffTarget = flag.Arg(0)
+			} else {
+				log.Fatalf("--diff requires a target snapshot; set --diff-target <file> or pass the target path as a positional argument")
+			}
+		}
+		runDiff(diffBase, diffTarget)
+		return
+	}
 
 	// Validate input
 	if config.Count <= 0 {

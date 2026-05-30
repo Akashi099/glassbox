@@ -16,6 +16,7 @@ import (
 	"github.com/dotandev/glassbox/internal/config"
 	"github.com/dotandev/glassbox/internal/deeplink"
 	"github.com/dotandev/glassbox/internal/localization"
+	"github.com/dotandev/glassbox/internal/logger"
 	"github.com/dotandev/glassbox/internal/protocolreg"
 	"github.com/dotandev/glassbox/internal/shutdown"
 	"github.com/dotandev/glassbox/internal/telemetry"
@@ -32,6 +33,8 @@ var (
 	ProfileFormatFlag string
 	DeepLinkFlag string
 	VersionFlag bool
+	LogLevelFlag string
+	VerboseFlag  bool
 
 	AuditLogPathFlag string
 	AuditLogProviderFlag string
@@ -71,6 +74,14 @@ Get started with 'Glassbox debug --help' or visit the documentation.`,
 		if VersionFlag {
 			fmt.Println(version.Version)
 			os.Exit(0)
+		}
+
+		// Apply log verbosity from CLI flags before any subsystem initialises.
+		// --verbose is a shorthand for --log-level=debug.
+		if VerboseFlag {
+			logger.SetLevel(logger.ParseLevel("debug"))
+		} else if LogLevelFlag != "" {
+			logger.SetLevel(logger.ParseLevel(LogLevelFlag))
 		}
 
 		// Handle deep link probe invocation before anything else.
@@ -300,6 +311,20 @@ func init() {
 		"profile-format",
 		"html",
 		"Flamegraph export format: 'html' (interactive) or 'svg' (raw)",
+	)
+
+	rootCmd.PersistentFlags().StringVar(
+		&LogLevelFlag,
+		"log-level",
+		"",
+		"Set log verbosity level (trace, debug, info, warn, error)",
+	)
+
+	rootCmd.PersistentFlags().BoolVar(
+		&VerboseFlag,
+		"verbose",
+		false,
+		"Enable verbose output (equivalent to --log-level=debug)",
 	)
 
 	rootCmd.PersistentFlags().BoolVar(
