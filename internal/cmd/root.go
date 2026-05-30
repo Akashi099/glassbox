@@ -32,6 +32,8 @@ var (
 	ProfileFormatFlag string
 	DeepLinkFlag string
 	VersionFlag bool
+	TelemetryFlag bool
+	TelemetryAnonymizedFlag bool
 
 	AuditLogPathFlag string
 	AuditLogProviderFlag string
