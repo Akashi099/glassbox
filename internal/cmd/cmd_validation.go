@@ -151,6 +151,53 @@ func validateGenerateBindingsFlags(network string, args []string, outputDir, run
 	return nil
 }
 
+// validateCheckBindingsFlags validates all flags for the check-bindings command.
+func validateCheckBindingsFlags(args []string, outputDir, specFile, specFormat string) error {
+	hasWasm := len(args) == 1 && args[0] != ""
+	hasSpec := specFile != ""
+
+	if hasWasm && hasSpec {
+		return errors.WrapValidationError(
+			"wasm-file argument and --spec-file are mutually exclusive — provide only one",
+		)
+	}
+	if !hasWasm && !hasSpec {
+		return errors.WrapValidationError(
+			"provide either a wasm-file argument or --spec-file",
+		)
+	}
+
+	if hasWasm {
+		if err := validateFilePath("wasm", args[0]); err != nil {
+			return err
+		}
+	}
+	if hasSpec {
+		if err := validateFilePath("spec-file", specFile); err != nil {
+			return err
+		}
+	}
+
+	if specFormat != "" {
+		validFormats := map[string]bool{"json": true, "xdr": true}
+		if !validFormats[strings.ToLower(specFormat)] {
+			return errors.WrapValidationError(fmt.Sprintf(
+				"--spec-format %q is not supported — must be one of: json, xdr", specFormat,
+			))
+		}
+	}
+
+	if outputDir != "" {
+		if info, err := os.Stat(outputDir); err == nil && !info.IsDir() {
+			return errors.WrapValidationError(fmt.Sprintf(
+				"--output %q exists but is not a directory", outputDir,
+			))
+		}
+	}
+
+	return nil
+}
+
 // validateAuditSignArgs validates all flags for the audit:sign command at
 // parse time, catching mutually exclusive inputs and missing required options.
 func validateAuditSignArgs(payload, payloadFile, provider string) error {

@@ -15,15 +15,16 @@ import (
 )
 
 var (
-	bindingsOutput      string
-	bindingsContractID  string
-	bindingsNetwork     string
-	bindingsPackage     string
-	bindingsDebugMeta   bool
-	bindingsWasmSrcPath string
-	bindingsRuntime     string
-	bindingsSpecFile    string
-	bindingsSpecFormat  string
+	bindingsOutput          string
+	bindingsContractID      string
+	bindingsNetwork         string
+	bindingsPackage         string
+	bindingsDebugMeta       bool
+	bindingsWasmSrcPath     string
+	bindingsRuntime         string
+	bindingsSpecFile        string
+	bindingsSpecFormat      string
+	bindingsNoEmbedMetadata bool
 )
 
 var generateBindingsCmd = &cobra.Command{
@@ -118,16 +119,17 @@ func runGenerateBindings(_ *cobra.Command, args []string) error {
 	}
 
 	config := bindings.GeneratorConfig{
-		WasmBytes:        wasmBytes,
-		SpecBytes:        specBytes,
-		SpecFormat:       specFormat,
-		OutputDir:        bindingsOutput,
-		PackageName:      bindingsPackage,
-		ContractID:       bindingsContractID,
-		Network:          bindingsNetwork,
-		RuntimeTarget:    bindings.RuntimeTarget(strings.ToLower(bindingsRuntime)),
-		IncludeDebugMeta: bindingsDebugMeta,
-		WasmSourcePath:   wasmSrc,
+		WasmBytes:               wasmBytes,
+		SpecBytes:               specBytes,
+		SpecFormat:              specFormat,
+		OutputDir:               bindingsOutput,
+		PackageName:             bindingsPackage,
+		ContractID:              bindingsContractID,
+		Network:                 bindingsNetwork,
+		RuntimeTarget:           bindings.RuntimeTarget(strings.ToLower(bindingsRuntime)),
+		IncludeDebugMeta:        bindingsDebugMeta,
+		WasmSourcePath:          wasmSrc,
+		NoEmbedArtifactMetadata: bindingsNoEmbedMetadata,
 	}
 
 	generator := bindings.NewGenerator(config)
@@ -158,6 +160,11 @@ func runGenerateBindings(_ *cobra.Command, args []string) error {
 	if bindingsDebugMeta {
 		fmt.Println("Debug metadata: enabled (metadata.ts + withDebugMetadata option)")
 	}
+	if bindingsNoEmbedMetadata {
+		fmt.Println("Artifact metadata: disabled (staleness detection unavailable)")
+	} else {
+		fmt.Println("Artifact metadata: embedded (use `glassbox check-bindings` to detect stale artifacts)")
+	}
 
 	return nil
 }
@@ -181,6 +188,8 @@ func init() {
 		"Path to an external contract ABI/spec file (JSON or XDR). When set, no WASM file is required.")
 	generateBindingsCmd.Flags().StringVar(&bindingsSpecFormat, "spec-format", "",
 		"Format of --spec-file: json or xdr (auto-detected when omitted)")
+	generateBindingsCmd.Flags().BoolVar(&bindingsNoEmbedMetadata, "no-embed-metadata", false,
+		"Disable embedding @glassbox-bindings-meta headers in generated files (disables staleness detection)")
 
 	rootCmd.AddCommand(generateBindingsCmd)
 }
