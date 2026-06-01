@@ -7,7 +7,9 @@ import (
 	"context"
 	"crypto/sha256"
 	"fmt"
+	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"time"
 
@@ -28,9 +30,25 @@ type Config struct {
 	Anonymized  bool
 }
 
+// EnvMetadata holds environment and feature metadata for telemetry events.
+// Sensitive values are excluded to protect user privacy.
+type EnvMetadata struct {
+	// CLI version (e.g., "1.2.3")
+	Version string
+	// Operating system (e.g., "linux", "darwin", "windows")
+	Platform string
+	// Architecture (e.g., "amd64", "arm64")
+	Arch string
+	// Enabled feature flags (non-sensitive only)
+	FeatureFlags []string
+	// Whether telemetry is anonymized
+	Anonymized bool
+}
+
 var (
 	commandTelemetryEnabled    bool
 	commandTelemetryAnonymized bool
+	envMetadata                EnvMetadata
 )
 
 // silentSpanExporter wraps a SpanExporter and swallows all export errors so
@@ -57,6 +75,15 @@ func Init(ctx context.Context, config Config) (func(), error) {
 	commandTelemetryEnabled = config.Enabled
 	commandTelemetryAnonymized = config.Anonymized
 
+	// Initialize environment metadata
+	envMetadata = EnvMetadata{
+		Version:     getVersion(),
+		Platform:    runtime.GOOS,
+		Arch:        runtime.GOARCH,
+		FeatureFlags: getFeatureFlags(),
+		Anonymized:  config.Anonymized,
+	}
+
 	if !config.Enabled {
 		return func() {}, nil
 	}
@@ -77,7 +104,7 @@ func Init(ctx context.Context, config Config) (func(), error) {
 	res, err := resource.New(ctx,
 		resource.WithAttributes(
 			semconv.ServiceNameKey.String(config.ServiceName),
-			semconv.ServiceVersionKey.String("dev"),
+			semconv.ServiceVersionKey.String(envMetadata.Version),
 		),
 	)
 	if err != nil {
@@ -104,7 +131,39 @@ func Init(ctx context.Context, config Config) (func(), error) {
 	}, nil
 }
 
-// RecordCommandUsage emits a lightweight command usage event for anonymized telemetry.
+// getVersion returns the CLI version from environment or a default.
+// In production, this would be set during build via ldflags.
+func getVersion() string {
+	if v := os.Getenv("GLASSBOX_VERSION"); v != "" {
+		return v
+	}
+	return "dev"
+}
+
+// getFeatureFlags returns a list of enabled feature flags.
+// Only non-sensitive, user-facing flags are included.
+func getFeatureFlags() []string {
+	var flags []string
+
+	// Check for optional features that are enabled
+	// These are intentionally limited to avoid exposing sensitive data
+	if os.Getenv("GLASSBOX_TELEMETRY") == "true" {
+		flags = append(flags, "telemetry")
+	}
+	if os.Getenv("GLASSBOX_CRASH_REPORTING") == "true" {
+		flags = append(flags, "crash_reporting")
+	}
+	if os.Getenv("GLASSBOX_FAILOVER_STRATEGY") != "" {
+		flags = append(flags, "failover")
+	}
+	if os.Getenv("GLASSBOX_SOROBAN_RPC_URLS") != "" {
+		flags = append(flags, "multi_rpc")
+	}
+
+	return flags
+}
+
+// RecordCommandUsage emits a lightweight command usage event with environment metadata.
 func RecordCommandUsage(ctx context.Context, command string) {
 	if !commandTelemetryEnabled {
 		return
@@ -118,15 +177,39 @@ func RecordCommandUsage(ctx context.Context, command string) {
 		command = "unknown"
 	}
 
+	// Set core command attributes
 	span.SetAttributes(
 		attribute.String("command.name", command),
 		attribute.Bool("telemetry.anonymized", commandTelemetryAnonymized),
 	)
+
+	// Add environment metadata (only if not anonymized)
+	if !commandTelemetryAnonymized {
+		span.SetAttributes(
+			attribute.String("env.version", envMetadata.Version),
+			attribute.String("env.platform", envMetadata.Platform),
+			attribute.String("env.arch", envMetadata.Arch),
+		)
+
+		// Add feature flags as a list
+		if len(envMetadata.FeatureFlags) > 0 {
+			span.SetAttributes(
+				attribute.StringSlice("env.feature_flags", envMetadata.FeatureFlags),
+			)
+		}
+	}
+
 	span.AddEvent("command.usage")
 }
 
+// GetEnvMetadata returns the current environment metadata.
+// This is useful for testing and debugging.
+func GetEnvMetadata() EnvMetadata {
+	return envMetadata
+}
+
 // GetTracer returns the global tracer instance
-func GetTracer() oteltrace.Tracer {
+func GetTracer() otel.Tracer {
 	return otel.Tracer("glassbox")
 }
 

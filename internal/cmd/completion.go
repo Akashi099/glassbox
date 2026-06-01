@@ -21,7 +21,7 @@ This can be done by sourcing it from your shell profile or piping it to the appr
 Installation instructions:
 
   Bash:
-    $ Glassbox completion bash > /etc/bash_completion.d/Glassbox
+    $ glassbox completion bash > /etc/bash_completion.d/glassbox
     $ source ~/.bashrc
 
   Zsh:
@@ -32,15 +32,23 @@ Installation instructions:
     # then add to your ~/.zshrc: fpath=(~/.zsh/completions $fpath)
 
   Fish:
-    $ Glassbox completion fish > ~/.config/fish/completions/Glassbox.fish
+    $ glassbox completion fish > ~/.config/fish/completions/glassbox.fish
     $ source ~/.config/fish/config.fish
 
   PowerShell:
-    PS> Glassbox completion powershell | Out-String | Invoke-Expression
+    PS> glassbox completion powershell | Out-String | Invoke-Expression
     # To load completions for every new session, add to your PowerShell profile:
-    PS> Glassbox completion powershell >> $PROFILE
+    PS> glassbox completion powershell >> $PROFILE
 
-For detailed instructions on setting up completions for your shell, consult your shell's documentation.`,
+For detailed instructions on setting up completions for your shell, consult your shell's documentation.
+
+Aliases:
+  Glassbox supports command aliases that are also included in shell completions.
+  Common aliases include:
+    sim    -> simulate
+    sign   -> audit:sign
+    verify -> audit:verify
+    gen    -> generate-xdr-snapshot`,
 	DisableFlagsInUseLine: true,
 	ValidArgs:             []string{"bash", "zsh", "fish", "powershell"},
 	Args:                  cobra.MatchAll(cobra.ExactArgs(1), cobra.OnlyValidArgs),
@@ -60,6 +68,22 @@ For detailed instructions on setting up completions for your shell, consult your
 			return fmt.Errorf("unsupported shell type %q. Valid shells: bash, zsh, fish, powershell", shell)
 		}
 	},
+}
+
+// commandAliases maps alias names to their primary command paths.
+// These are included in shell completion scripts.
+var commandAliases = map[string]string{
+	"sim":     "simulate",
+	"sign":    "audit:sign",
+	"verify":  "audit:verify",
+	"gen":     "generate-xdr-snapshot",
+	"tx":      "transaction",
+	"contract": "contract",
+}
+
+// GetCommandAliases returns the map of command aliases for external use.
+func GetCommandAliases() map[string]string {
+	return commandAliases
 }
 
 func init() {
