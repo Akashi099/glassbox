@@ -30,6 +30,9 @@ type PrintOptions struct {
 
 	// Output is the writer to send the report to. nil defaults to os.Stdout.
 	Output io.Writer
+
+	// EventSchemas optionally decodes diagnostic contract events for printing.
+	EventSchemas *EventSchemaSet
 }
 
 func (o PrintOptions) writer() io.Writer {
@@ -225,6 +228,19 @@ func PrintExecutionTrace(t *ExecutionTrace, opts PrintOptions) {
 	}
 
 	// ── footer ───────────────────────────────────────────────────────────────
+	if len(t.DecodedEvents) > 0 || len(t.DiagnosticEvents) > 0 {
+		events := t.DecodedEvents
+		if len(events) == 0 {
+			events = DecodeDiagnosticEventsWithSchemas(t.DiagnosticEvents, opts.EventSchemas)
+		}
+		CorrelateEvents(events, t)
+		_, _ = p.separator.Fprintln(out, sep)
+		_, _ = p.header.Fprintln(out, " Decoded Contract Events")
+		for _, ev := range events {
+			_, _ = fmt.Fprintf(out, " %s\n", formatEventSummary(ev))
+		}
+	}
+
 	_, _ = p.separator.Fprintln(out, sep)
 	printSummaryLine(out, p, total, errorCount, finalStatus)
 	_, _ = fmt.Fprintln(out)

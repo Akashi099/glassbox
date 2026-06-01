@@ -62,6 +62,7 @@ type ExecutionTrace struct {
 	States           []ExecutionState            `json:"states"`
 	Snapshots        []StateSnapshot             `json:"snapshots"`
 	DiagnosticEvents []simulator.DiagnosticEvent `json:"diagnostic_events,omitempty"`
+	DecodedEvents    []*ContractEvent            `json:"decoded_events,omitempty"`
 	CurrentStep      int                         `json:"current_step"`
 	SnapshotInterval int                         `json:"snapshot_interval"`
 
@@ -401,6 +402,11 @@ func (t *ExecutionTrace) ExportJSON(schemaVersion string, generatedAt time.Time)
 		gen = time.Now()
 	}
 
+	decodedEvents := t.DecodedEvents
+	if len(decodedEvents) == 0 {
+		decodedEvents = DecodeDiagnosticEventsWithSchemas(t.DiagnosticEvents, nil)
+	}
+
 	exportObj := map[string]interface{}{
 		"schema_version": schemaVersion,
 		"generated_at": gen.UTC().Truncate(time.Second).Format(time.RFC3339),
@@ -411,6 +417,7 @@ func (t *ExecutionTrace) ExportJSON(schemaVersion string, generatedAt time.Time)
 			"states":            states,
 			"snapshots":         snaps,
 			"diagnostic_events": t.DiagnosticEvents,
+			"decoded_events":    decodedEvents,
 			"subcall_graph":     exportSubcallGraph(t.SubcallGraph()),
 		},
 	}

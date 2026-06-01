@@ -24,6 +24,7 @@ var (
 	traceOutputJSON  string
 	traceExportPath   string
 	traceExportFormat string
+	traceEventSchemas []string
 )
 
 var traceCmd = &cobra.Command{
@@ -93,11 +94,20 @@ logs or piping to other tools. Add --no-color to disable ANSI colours.`,
 		if err != nil {
 			return errors.WrapUnmarshalFailed(err, "trace")
 		}
+		eventSchemas, err := trace.LoadEventSchemas(traceEventSchemas...)
+		if err != nil {
+			return errors.WrapValidationError(fmt.Sprintf("failed to load event schemas: %v", err))
+		}
+		if len(eventSchemas.Events) > 0 && len(executionTrace.DiagnosticEvents) > 0 {
+			executionTrace.DecodedEvents = trace.DecodeDiagnosticEventsWithSchemas(executionTrace.DiagnosticEvents, eventSchemas)
+			trace.CorrelateEvents(executionTrace.DecodedEvents, executionTrace)
+		}
 
 		// --print: render a rich ASCII tree report then exit (non-interactive)
 		if tracePrint {
 			opts := trace.PrintOptions{
-				NoColor: traceNoColor,
+				NoColor:      traceNoColor,
+				EventSchemas: eventSchemas,
 			}
 			trace.PrintExecutionTrace(executionTrace, opts)
 			return nil
@@ -160,6 +170,7 @@ func init() {
 	traceCmd.Flags().BoolVar(&traceNoColor, "no-color", false, "Disable ANSI colour output (also honoured via NO_COLOR env var)")
 	traceCmd.Flags().StringVar(&traceExportSVG, "export-svg", "", "Export call graph as SVG to specified file")
 	traceCmd.Flags().StringVar(&traceOutputJSON, "output-json", "", "Export trace as deterministic JSON to specified file (includes schema_version)")
+	traceCmd.Flags().StringArrayVar(&traceEventSchemas, "event-schema", nil, "JSON or ABI event schema file used to decode contract events")
 
 	_ = traceCmd.RegisterFlagCompletionFunc("theme", completeThemeFlag)
 

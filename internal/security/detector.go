@@ -7,6 +7,7 @@ import (
 	"encoding/base64"
 	"fmt"
 	"math/big"
+	"regexp"
 	"strings"
 
 	"github.com/stellar/go-stellar-sdk/xdr"
@@ -37,6 +38,15 @@ type Finding struct {
 	Title       string      `json:"title"`
 	Description string      `json:"description"`
 	Evidence    string      `json:"evidence,omitempty"`
+}
+
+// SourceContext contains optional contract source and metadata for proactive
+// contract-level checks.
+type SourceContext struct {
+	ContractID string            `json:"contract_id,omitempty"`
+	Path       string            `json:"path,omitempty"`
+	Source     string            `json:"source,omitempty"`
+	Metadata   map[string]string `json:"metadata,omitempty"`
 }
 
 // Detector analyzes transactions for security vulnerabilities
@@ -70,6 +80,24 @@ func (d *Detector) Analyze(envelopeXdr, resultMetaXdr string, events []string, l
 	return d.findings
 }
 
+// AnalyzeContractSource emits warnings for insecure Soroban patterns found in
+// source code or metadata. It is intentionally heuristic and focuses on
+// actionable patterns developers can confirm quickly.
+func (d *Detector) AnalyzeContractSource(ctx SourceContext) []Finding {
+	d.findings = make([]Finding, 0)
+	source := strings.ToLower(ctx.Source)
+	metadata := make(map[string]string, len(ctx.Metadata))
+	for k, v := range ctx.Metadata {
+		metadata[strings.ToLower(k)] = strings.ToLower(v)
+	}
+
+	d.checkOpenAuthPattern(source, ctx)
+	d.checkUncheckedAssetMinting(source, metadata, ctx)
+	d.checkUnsafeSignatureTypes(source, metadata, ctx)
+
+	return d.findings
+}
+
 // GetFindings returns all detected findings
 func (d *Detector) GetFindings() []Finding {
 	return d.findings
@@ -77,6 +105,70 @@ func (d *Detector) GetFindings() []Finding {
 
 func (d *Detector) addFinding(finding Finding) {
 	d.findings = append(d.findings, finding)
+}
+
+func (d *Detector) checkOpenAuthPattern(source string, ctx SourceContext) {
+	if source == "" {
+		return
+	}
+	hasPrivileged := regexp.MustCompile(`\b(admin|owner|upgrade|mint|burn|set_\w+|transfer_ownership)\b`).MatchString(source)
+	hasAuth := strings.Contains(source, "require_auth") || strings.Contains(source, "require_auth_for_args") || strings.Contains(source, "check_auth")
+	if hasPrivileged && !hasAuth {
+		d.addFinding(Finding{
+			Type:        FindingHeuristicWarn,
+			Severity:    SeverityHigh,
+			Title:       "Open Authorization Pattern",
+			Description: "Privileged contract logic appears without require_auth/check_auth. Require the expected admin or invoker before mutating sensitive state.",
+			Evidence:    sourceEvidence(ctx, "privileged function without auth guard"),
+		})
+	}
+}
+
+func (d *Detector) checkUncheckedAssetMinting(source string, metadata map[string]string, ctx SourceContext) {
+	if source == "" && len(metadata) == 0 {
+		return
+	}
+	mints := strings.Contains(source, ".mint(") || strings.Contains(source, " mint(") || metadata["capability"] == "mint"
+	hasSupplyCheck := strings.Contains(source, "max_supply") || strings.Contains(source, "cap") || strings.Contains(source, "limit")
+	hasAuth := strings.Contains(source, "require_auth") || strings.Contains(source, "check_auth")
+	if mints && (!hasSupplyCheck || !hasAuth) {
+		d.addFinding(Finding{
+			Type:        FindingHeuristicWarn,
+			Severity:    SeverityHigh,
+			Title:       "Unchecked Asset Minting",
+			Description: "Minting is exposed without an obvious authorization and supply-limit check. Gate mint paths and enforce a fixed cap or policy.",
+			Evidence:    sourceEvidence(ctx, "mint path missing auth or supply cap"),
+		})
+	}
+}
+
+func (d *Detector) checkUnsafeSignatureTypes(source string, metadata map[string]string, ctx SourceContext) {
+	if source == "" && len(metadata) == 0 {
+		return
+	}
+	unsafeMeta := metadata["signature_type"] == "raw" || metadata["signature_type"] == "ed25519_raw"
+	unsafeSource := strings.Contains(source, "bytesn<64>") || strings.Contains(source, "raw signature") || strings.Contains(source, "verify_sig_ed25519")
+	hasDomainSeparation := strings.Contains(source, "domain") || strings.Contains(source, "network") || strings.Contains(source, "nonce")
+	if (unsafeMeta || unsafeSource) && !hasDomainSeparation {
+		d.addFinding(Finding{
+			Type:        FindingHeuristicWarn,
+			Severity:    SeverityMedium,
+			Title:       "Unsafe Signature Type",
+			Description: "Raw signature verification appears without obvious domain separation, nonce, or network binding. Prefer Soroban auth or verify signed structured payloads.",
+			Evidence:    sourceEvidence(ctx, "raw signature verification"),
+		})
+	}
+}
+
+func sourceEvidence(ctx SourceContext, detail string) string {
+	parts := []string{detail}
+	if ctx.ContractID != "" {
+		parts = append(parts, "contract="+ctx.ContractID)
+	}
+	if ctx.Path != "" {
+		parts = append(parts, "path="+ctx.Path)
+	}
+	return strings.Join(parts, " ")
 }
 
 // checkLargeValueTransfers detects unusually large value transfers

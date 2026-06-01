@@ -199,3 +199,56 @@ func TestDetector_MultipleFindings(t *testing.T) {
 		t.Error("Expected at least one heuristic warning")
 	}
 }
+
+func TestDetector_OpenAuthSourcePattern(t *testing.T) {
+	detector := NewDetector()
+	findings := detector.AnalyzeContractSource(SourceContext{
+		Path: "contract/src/lib.rs",
+		Source: `
+			pub fn transfer_ownership(env: Env, new_owner: Address) {
+				env.storage().instance().set(&symbol_short!("owner"), &new_owner);
+			}`,
+	})
+
+	if len(findings) != 1 {
+		t.Fatalf("expected one open auth finding, got %d", len(findings))
+	}
+	if findings[0].Title != "Open Authorization Pattern" || findings[0].Severity != SeverityHigh {
+		t.Fatalf("unexpected finding: %#v", findings[0])
+	}
+}
+
+func TestDetector_UncheckedAssetMintingPattern(t *testing.T) {
+	detector := NewDetector()
+	findings := detector.AnalyzeContractSource(SourceContext{
+		Source: `pub fn mint(env: Env, to: Address, amount: i128) { token.mint(&to, &amount); }`,
+	})
+
+	found := false
+	for _, finding := range findings {
+		if finding.Title == "Unchecked Asset Minting" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("expected unchecked mint warning, got %#v", findings)
+	}
+}
+
+func TestDetector_UnsafeSignaturePattern(t *testing.T) {
+	detector := NewDetector()
+	findings := detector.AnalyzeContractSource(SourceContext{
+		Metadata: map[string]string{"signature_type": "raw"},
+		Source:   `pub fn submit(sig: BytesN<64>) { verify_sig_ed25519(sig); }`,
+	})
+
+	found := false
+	for _, finding := range findings {
+		if finding.Title == "Unsafe Signature Type" && finding.Severity == SeverityMedium {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("expected unsafe signature warning, got %#v", findings)
+	}
+}
