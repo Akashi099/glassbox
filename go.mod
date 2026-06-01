@@ -3,6 +3,13 @@ module github.com/dotandev/glassbox
 go 1.25.0
 
 require (
+	github.com/aws/aws-sdk-go-v2 v1.32.0
+	github.com/aws/aws-sdk-go-v2/config v1.28.0
+	github.com/aws/aws-sdk-go-v2/credentials v1.17.0
+	github.com/aws/aws-sdk-go-v2/service/kms v1.36.0
+)
+
+require (
 	github.com/atotto/clipboard v0.1.4
 	github.com/cespare/xxhash/v2 v2.3.0
 	github.com/fatih/color v1.19.0
