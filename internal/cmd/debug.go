@@ -82,6 +82,7 @@ var (
 	loadSnapshotsFlag    string
 	saveSnapshotsFlag    string
 	wasmBase64           string
+	contractSourceFlag   string
 )
 
 // DebugCommand holds dependencies for the debug command
@@ -996,6 +997,9 @@ func newLocalWasmSimulationRequest(forceNoCache bool) *simulator.SimulationReque
 		MockArgs:        &args,
 		ContractWasm:    &wasmBase64, // Pass the WASM binary for source mapping
 		EnableSnapshots: snapshotsFlag,
+	}
+	if contractSourceFlag != "" {
+		req.ContractSourcePath = &contractSourceFlag
 	}
 	applySimulationFeeMocks(req)
 	return req
@@ -1928,6 +1932,7 @@ func init() {
 	debugCmd.Flags().StringVar(&exportSVGFlag, "export-svg", "", "Export call graph as SVG to specified file")
 	debugCmd.Flags().StringVar(&loadSnapshotsFlag, "load-snapshots", "", "Load simulation from a snapshot registry")
 	debugCmd.Flags().StringVar(&saveSnapshotsFlag, "save-snapshots", "", "Save simulation results to a snapshot registry")
+	debugCmd.Flags().StringVar(&contractSourceFlag, "contract-source", "", "Explicit path to contract source directory for source mapping (used when auto-discovery fails)")
 	rootCmd.AddCommand(debugCmd)
 }
 
@@ -1994,11 +1999,21 @@ func displaySourceLocation(loc *simulator.SourceLocation) {
 	// Try to find the file
 	content, err := os.ReadFile(loc.File)
 	if err != nil {
+		// Try override path first when --contract-source is set
+		if contractSourceFlag != "" {
+			if c, err := os.ReadFile(filepath.Join(contractSourceFlag, loc.File)); err == nil {
+				content = c
+			} else if c, err := os.ReadFile(filepath.Join(contractSourceFlag, filepath.Base(loc.File))); err == nil {
+				content = c
+			}
+		}
 		// Try to find in current directory or src
-		if c, err := os.ReadFile(filepath.Join("src", loc.File)); err == nil {
-			content = c
-		} else {
-			return
+		if content == nil {
+			if c, err := os.ReadFile(filepath.Join("src", loc.File)); err == nil {
+				content = c
+			} else {
+				return
+			}
 		}
 	}
 

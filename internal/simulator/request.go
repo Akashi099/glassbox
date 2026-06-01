@@ -32,6 +32,9 @@ type SimulationRequest struct {
 
 	SandboxNativeTokenCapStroops *uint64 `json:"sandbox_native_token_cap_stroops,omitempty"`
 	ContractWasm                 *string `json:"contract_wasm,omitempty"`
+	// ContractSourcePath is an explicit path to the contract source directory
+	// for source mapping. Used when auto-discovery fails (Issue #117).
+	ContractSourcePath *string `json:"contract_source_path,omitempty"`
 }
 
 type ResourceCalibration struct {

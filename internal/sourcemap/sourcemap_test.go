@@ -817,13 +817,13 @@ func TestHashMismatchError_Message(t *testing.T) {
 	}
 	msg := e.Error()
 	for _, want := range []string{"aabbcc", "112233", "/path/to/contract.wasm"} {
-		if !contains(msg, want) {
+		if !containsStr(msg, want) {
 			t.Errorf("error message %q missing %q", msg, want)
 		}
 	}
 }
 
-func contains(s, sub string) bool {
+func containsStr(s, sub string) bool {
 	return len(s) >= len(sub) && (s == sub || len(sub) == 0 ||
 		func() bool {
 			for i := 0; i <= len(s)-len(sub); i++ {

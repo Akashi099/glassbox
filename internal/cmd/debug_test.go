@@ -240,6 +240,11 @@ func TestDebugCommand_Setup(t *testing.T) {
 	snapshots := debugCmd.Flags().Lookup("snapshots")
 	assert.NotNil(t, snapshots)
 	assert.Equal(t, "false", snapshots.DefValue)
+
+	// Verify --contract-source flag is registered (Issue #117)
+	contractSource := debugCmd.Flags().Lookup("contract-source")
+	assert.NotNil(t, contractSource, "--contract-source flag must be registered")
+	assert.Equal(t, "", contractSource.DefValue, "--contract-source default must be empty")
 }
 
 func TestApplySimulationFeeMocks(t *testing.T) {
@@ -262,6 +267,42 @@ func TestApplySimulationFeeMocks(t *testing.T) {
 	if assert.NotNil(t, req.MockGasPrice) {
 		assert.Equal(t, uint64(99), *req.MockGasPrice)
 	}
+}
+
+// TestNewLocalWasmSimulationRequest_ContractSourcePath verifies that when
+// --contract-source is set, the path is propagated to the SimulationRequest.
+func TestNewLocalWasmSimulationRequest_ContractSourcePath(t *testing.T) {
+	prevWasm := wasmPath
+	prevSource := contractSourceFlag
+	t.Cleanup(func() {
+		wasmPath = prevWasm
+		contractSourceFlag = prevSource
+	})
+
+	wasmPath = "/tmp/contract.wasm"
+	contractSourceFlag = "/path/to/src"
+
+	req := newLocalWasmSimulationRequest(false)
+	if assert.NotNil(t, req.ContractSourcePath, "ContractSourcePath must be set when --contract-source is provided") {
+		assert.Equal(t, "/path/to/src", *req.ContractSourcePath)
+	}
+}
+
+// TestNewLocalWasmSimulationRequest_NoContractSource verifies that when
+// --contract-source is not set, ContractSourcePath is nil.
+func TestNewLocalWasmSimulationRequest_NoContractSource(t *testing.T) {
+	prevWasm := wasmPath
+	prevSource := contractSourceFlag
+	t.Cleanup(func() {
+		wasmPath = prevWasm
+		contractSourceFlag = prevSource
+	})
+
+	wasmPath = "/tmp/contract.wasm"
+	contractSourceFlag = ""
+
+	req := newLocalWasmSimulationRequest(false)
+	assert.Nil(t, req.ContractSourcePath, "ContractSourcePath must be nil when --contract-source is not set")
 }
 
 func TestDeprecatedHostFunctionDetection(t *testing.T) {

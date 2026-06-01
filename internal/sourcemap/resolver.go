@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/dotandev/glassbox/internal/dwarf"
 	"github.com/dotandev/glassbox/internal/logger"
@@ -23,6 +24,9 @@ type Resolver struct {
 	registry        *RegistryClient
 	cache           *SourceCache
 	githubRetriever *GitHubRetriever
+	// contractSourceOverride is an explicit local path to the contract source
+	// directory. When set, it is used as a fallback before prompting the user.
+	contractSourceOverride string
 }
 
 // ResolverOption is a functional option for configuring the Resolver.
@@ -44,6 +48,15 @@ func WithCache(cacheDir string) ResolverOption {
 func WithRegistryClient(rc *RegistryClient) ResolverOption {
 	return func(r *Resolver) {
 		r.registry = rc
+	}
+}
+
+// WithContractSource sets an explicit local path to the contract source
+// directory. When automatic discovery fails, this path is used before
+// prompting the user interactively (Issue #117).
+func WithContractSource(path string) ResolverOption {
+	return func(r *Resolver) {
+		r.contractSourceOverride = path
 	}
 }
 
@@ -97,7 +110,21 @@ func (r *Resolver) Resolve(ctx context.Context, contractID string) (*SourceCode,
 		}
 	}
 
-	// 4. Fallback: Prompt user if source is unresolved (Issue #372)
+	// 4. Fallback: use explicit override path if provided (Issue #117)
+	if source == nil && r.contractSourceOverride != "" {
+		logger.Logger.Info("Using --contract-source override for source mapping",
+			"contract_id", contractID,
+			"path", r.contractSourceOverride,
+		)
+		return &SourceCode{
+			ContractID: contractID,
+			Repository: r.contractSourceOverride,
+			Files:      map[string]string{},
+			FetchedAt:  time.Now(),
+		}, nil
+	}
+
+	// 5. Fallback: Prompt user if source is unresolved (Issue #372)
 	if source == nil {
 		logger.Logger.Info("Contract source unresolved automatically", "contract_id", contractID)
 
@@ -115,7 +142,7 @@ func (r *Resolver) Resolve(ctx context.Context, contractID string) (*SourceCode,
 		return nil, nil
 	}
 
-	// 4. Cache the result
+	// 6. Cache the result
 	if r.cache != nil {
 		if err := r.cache.Put(source); err != nil {
 			logger.Logger.Warn("Failed to cache source", "contract_id", contractID, "error", err)
