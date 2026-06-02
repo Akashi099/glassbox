@@ -48,6 +48,7 @@ type Data struct {
 
 	// Metadata
 	ErstVersion   string `json:"GLASSBOX_version"`
+	EnvFingerprint string `json:"env_fingerprint,omitempty"`
 	SchemaVersion int    `json:"schema_version"`
 }
 
@@ -109,6 +110,7 @@ func (s *Store) initSchema() error {
 		result_meta_xdr TEXT,
 		sim_request_json TEXT,
 		sim_response_json TEXT,
+		env_fingerprint TEXT,
 		GLASSBOX_version TEXT,
 		schema_version INTEGER NOT NULL
 	);
@@ -189,6 +191,7 @@ func (s *Store) Save(ctx context.Context, data *Data) error {
 		result_meta_xdr = excluded.result_meta_xdr,
 		sim_request_json = excluded.sim_request_json,
 		sim_response_json = excluded.sim_response_json,
+		env_fingerprint = excluded.env_fingerprint,
 		GLASSBOX_version = excluded.GLASSBOX_version,
 		schema_version = excluded.schema_version
 	`
@@ -197,8 +200,7 @@ func (s *Store) Save(ctx context.Context, data *Data) error {
 		data.ID, data.Name, data.CreatedAt, data.LastAccessAt, data.Status,
 		data.Network, data.HorizonURL, data.TxHash,
 		data.EnvelopeXdr, data.ResultXdr, data.ResultMetaXdr,
-		data.SimRequestJSON, data.SimResponseJSON,
-		data.ErstVersion, data.SchemaVersion,
+		data.SimRequestJSON, data.SimResponseJSON, data.EnvFingerprint, data.ErstVersion, data.SchemaVersion,
 	)
 
 	if err != nil {
@@ -214,7 +216,7 @@ func (s *Store) Load(ctx context.Context, sessionID string) (*Data, error) {
 	query := `
 	SELECT id, name, created_at, last_access_at, status, network, horizon_url, tx_hash,
 	       envelope_xdr, result_xdr, result_meta_xdr,
-	       sim_request_json, sim_response_json, GLASSBOX_version, schema_version
+	       sim_request_json, sim_response_json, env_fingerprint, GLASSBOX_version, schema_version
 	FROM sessions
 	WHERE id = ?
 	`
@@ -222,13 +224,16 @@ func (s *Store) Load(ctx context.Context, sessionID string) (*Data, error) {
 	var data Data
 	var createdAt, lastAccessAt string
 
+	var envFP sql.NullString
 	err := s.db.QueryRowContext(ctx, query, sessionID).Scan(
 		&data.ID, &data.Name, &createdAt, &lastAccessAt, &data.Status,
 		&data.Network, &data.HorizonURL, &data.TxHash,
 		&data.EnvelopeXdr, &data.ResultXdr, &data.ResultMetaXdr,
-		&data.SimRequestJSON, &data.SimResponseJSON,
-		&data.ErstVersion, &data.SchemaVersion,
+		&data.SimRequestJSON, &data.SimResponseJSON, &envFP, &data.ErstVersion, &data.SchemaVersion,
 	)
+	if envFP.Valid {
+		data.EnvFingerprint = envFP.String
+	}
 
 	if err == sql.ErrNoRows {
 		return nil, fmt.Errorf("session not found: %s", sessionID)
@@ -277,7 +282,7 @@ func (s *Store) List(ctx context.Context, limit int) ([]*Data, error) {
 	query := `
 	SELECT id, name, created_at, last_access_at, status, network, horizon_url, tx_hash,
 	       envelope_xdr, result_xdr, result_meta_xdr,
-	       sim_request_json, sim_response_json, GLASSBOX_version, schema_version
+	       sim_request_json, sim_response_json, env_fingerprint, GLASSBOX_version, schema_version
 	FROM sessions
 	ORDER BY last_access_at DESC
 	LIMIT ?
@@ -294,15 +299,18 @@ func (s *Store) List(ctx context.Context, limit int) ([]*Data, error) {
 		var data Data
 		var createdAt, lastAccessAt string
 
+		envFP := sql.NullString{}
 		scanErr := rows.Scan(
 			&data.ID, &data.Name, &createdAt, &lastAccessAt, &data.Status,
 			&data.Network, &data.HorizonURL, &data.TxHash,
 			&data.EnvelopeXdr, &data.ResultXdr, &data.ResultMetaXdr,
-			&data.SimRequestJSON, &data.SimResponseJSON,
-			&data.ErstVersion, &data.SchemaVersion,
+			&data.SimRequestJSON, &data.SimResponseJSON, &envFP, &data.ErstVersion, &data.SchemaVersion,
 		)
 		if scanErr != nil {
 			return nil, fmt.Errorf("failed to scan session: %w", scanErr)
+		}
+		if envFP.Valid {
+			data.EnvFingerprint = envFP.String
 		}
 
 		// Parse timestamps
