@@ -102,6 +102,10 @@ The session ID can be auto-generated or specified with --id flag.`,
 			data.Name = strings.TrimSpace(sessionNameFlag)
 		}
 
+		if sessionPinEndpointFlag != "" {
+			data.PinnedEndpoint = sessionPinEndpointFlag
+		}
+
 		data.Status = "saved"
 		data.LastAccessAt = time.Now()
 
@@ -193,6 +197,9 @@ Use 'Glassbox session list' to see available session IDs and names.`,
 		}
 		fmt.Printf("  Transaction: %s\n", data.TxHash)
 		fmt.Printf("  Network: %s\n", data.Network)
+		if data.PinnedEndpoint != "" {
+			fmt.Printf("  Pinned endpoint: %s\n", data.PinnedEndpoint)
+		}
 		fmt.Printf("  Created: %s\n", data.CreatedAt.Format(time.RFC3339))
 		fmt.Printf("  Last accessed: %s\n", data.LastAccessAt.Format(time.RFC3339))
 

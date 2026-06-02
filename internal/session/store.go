@@ -41,6 +41,7 @@ type Data struct {
 	EnvelopeXdr   string    `json:"envelope_xdr"`
 	ResultXdr     string    `json:"result_xdr"`
 	ResultMetaXdr string    `json:"result_meta_xdr"`
+	PinnedEndpoint string   `json:"pinned_endpoint,omitempty"`
 
 	// Simulator I/O
 	SimRequestJSON  string `json:"sim_request_json"`  // JSON sent to glassbox-sim
@@ -108,6 +109,7 @@ func (s *Store) initSchema() error {
 		envelope_xdr TEXT,
 		result_xdr TEXT,
 		result_meta_xdr TEXT,
+		pinned_endpoint TEXT,
 		sim_request_json TEXT,
 		sim_response_json TEXT,
 		env_fingerprint TEXT,
@@ -127,6 +129,16 @@ func (s *Store) initSchema() error {
 	}
 	if _, err := s.db.Exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_session_name ON sessions(name) WHERE name IS NOT NULL AND name != ''`); err != nil {
 		return fmt.Errorf("failed to create session name index: %w", err)
+	}
+
+	hasPinnedEndpoint, err := s.columnExists("sessions", "pinned_endpoint")
+	if err != nil {
+		return err
+	}
+	if !hasPinnedEndpoint {
+		if _, err := s.db.Exec(`ALTER TABLE sessions ADD COLUMN pinned_endpoint TEXT`); err != nil {
+			return fmt.Errorf("failed to migrate sessions schema: %w", err)
+		}
 	}
 
 	return nil
@@ -189,6 +201,7 @@ func (s *Store) Save(ctx context.Context, data *Data) error {
 		envelope_xdr = excluded.envelope_xdr,
 		result_xdr = excluded.result_xdr,
 		result_meta_xdr = excluded.result_meta_xdr,
+		pinned_endpoint = excluded.pinned_endpoint,
 		sim_request_json = excluded.sim_request_json,
 		sim_response_json = excluded.sim_response_json,
 		env_fingerprint = excluded.env_fingerprint,
@@ -223,6 +236,7 @@ func (s *Store) Load(ctx context.Context, sessionID string) (*Data, error) {
 
 	var data Data
 	var createdAt, lastAccessAt string
+	var pinnedEndpoint sql.NullString
 
 	var envFP sql.NullString
 	err := s.db.QueryRowContext(ctx, query, sessionID).Scan(
@@ -298,6 +312,7 @@ func (s *Store) List(ctx context.Context, limit int) ([]*Data, error) {
 	for rows.Next() {
 		var data Data
 		var createdAt, lastAccessAt string
+		var pinnedEndpoint sql.NullString
 
 		envFP := sql.NullString{}
 		scanErr := rows.Scan(
