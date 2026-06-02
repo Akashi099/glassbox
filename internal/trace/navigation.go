@@ -405,6 +405,11 @@ func (t *ExecutionTrace) ExportJSON(schemaVersion string, generatedAt time.Time)
 		gen = time.Now()
 	}
 
+	decodedEvents := t.DecodedEvents
+	if len(decodedEvents) == 0 {
+		decodedEvents = DecodeDiagnosticEventsWithSchemas(t.DiagnosticEvents, nil)
+	}
+
 	exportObj := map[string]interface{}{
 		"schema_version": schemaVersion,
 		"generated_at": gen.UTC().Truncate(time.Second).Format(time.RFC3339),

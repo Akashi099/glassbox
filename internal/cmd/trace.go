@@ -135,7 +135,8 @@ logs or piping to other tools. Add --no-color to disable ANSI colours.`,
 		// --print: render a rich ASCII tree report then exit (non-interactive)
 		if tracePrint {
 			opts := trace.PrintOptions{
-				NoColor: traceNoColor,
+				NoColor:      traceNoColor,
+				EventSchemas: eventSchemas,
 			}
 			trace.PrintExecutionTrace(executionTrace, opts)
 			return nil
