@@ -21,6 +21,7 @@ When `--json` is set (or `--format json`), output is wrapped as:
 | Command | Flags |
 |---------|--------|
 | `debug` | `--json`, `--format json` |
+| `export` | `--format json` |
 | `audit:sign` | `--json` (schema envelope; legacy output without the flag) |
 | `protocol:diagnose` | `--json` |
 | `generate-bindings` | `--json`, `--format json` |
@@ -28,8 +29,14 @@ When `--json` is set (or `--format json`), output is wrapped as:
 | `config show` | `--json` |
 | `bench` | `--json` |
 
+**Format validation:** `--format` is validated at startup for all commands that accept it. Unsupported values (e.g. `--format yaml`) are rejected immediately with an explicit error listing the accepted values.
+
 ## Example
 
 ```bash
-glassbox debug --wasm ./contract.wasm --json --format json
+# debug with JSON output
+glassbox debug --wasm ./contract.wasm --json
+
+# export snapshot as JSON envelope
+glassbox export --snapshot ./state.snap.json --format json
 ```

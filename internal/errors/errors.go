@@ -163,9 +163,15 @@ func WrapSimulatorNotFound(msg string) error {
 }
 
 func WrapSimulationFailed(err error, stderr string) error {
+	msg := "simulation execution failed"
+	if stderr != "" {
+		msg = fmt.Sprintf("simulation execution failed: %s", stderr)
+	} else if err != nil {
+		msg = fmt.Sprintf("simulation execution failed: %s", err.Error())
+	}
 	return &ErstError{
 		Code:    ErstSimulationFailed,
-		Message: stderr,
+		Message: msg,
 		OrigErr: err,
 	}
 }
@@ -173,7 +179,7 @@ func WrapSimulationFailed(err error, stderr string) error {
 func WrapInvalidNetwork(network string) error {
 	return &ErstError{
 		Code:    ErstInvalidNetwork,
-		Message: network + ". Must be one of: testnet, mainnet, futurenet",
+		Message: fmt.Sprintf("invalid network %q — must be one of: testnet, mainnet, futurenet", network),
 	}
 }
 
@@ -251,7 +257,7 @@ func WrapProtocolUnsupported(version uint32) error {
 func WrapCliArgumentRequired(arg string) error {
 	return &ErstError{
 		Code:    ErstValidationFailed,
-		Message: "--" + arg,
+		Message: fmt.Sprintf("--%s is required but was not provided", arg),
 	}
 }
 

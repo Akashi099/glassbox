@@ -36,7 +36,7 @@ glassbox debug --load-snapshots <registry-file>
 | `--rpc-url` | _(config)_ | Custom RPC URL. Overrides config and environment. Accepts comma-separated URLs for fallback. |
 | `--rpc-token` | _(env: `GLASSBOX_RPC_TOKEN`)_ | RPC authentication token. |
 | `--compare-network` | _(none)_ | Run the same transaction on a second network and diff the results. |
-| `--network` and `--compare-network` must be different networks.
+| `--network` and `--compare-network` must be different networks. Providing the same value for both is rejected with an explicit error at startup.
 
 ---
 
@@ -114,9 +114,9 @@ Replays a previously saved snapshot registry without any network connectivity. S
 
 | Flag | Default | Description |
 |---|---|---|
-| `--json` | `false` | Emit simulation results as machine-readable JSON. |
-| `--format` | `text` | Output format: `text` or `json`. |
-| `--trace-verbosity` | `normal` | Trace detail level: `summary`, `normal`, or `verbose`. |
+| `--json` | `false` | Emit simulation results as machine-readable JSON. Equivalent to `--format json`. |
+| `--format` | `text` | Output format: `text` or `json`. Validated at startup — unknown values are rejected with an explicit error. |
+| `--trace-verbosity` | `normal` | Trace detail level: `summary`, `normal`, or `verbose`. Validated at startup — unknown values are rejected before any network calls. |
 | `--export-svg` | _(none)_ | Export the call graph as an SVG file. |
 | `--show-metrics` | `false` | Print RPC and simulation performance metrics after the run. |
 | `--verbose`, `-v` | `false` | Enable verbose logging (equivalent to `--log-level=debug`). |
@@ -154,7 +154,7 @@ Replays a previously saved snapshot registry without any network connectivity. S
 | Flag | Default | Description |
 |---|---|---|
 | `--watch` | `false` | Poll for a pending transaction to appear on-chain before debugging. |
-| `--watch-timeout` | `30` | Timeout in seconds for `--watch` mode. |
+| `--watch-timeout` | `30` | Timeout in seconds for `--watch` mode. Must be a positive integer when `--watch` is set. |
 | `--save-snapshots` | _(none)_ | Save simulation results to a snapshot registry file. |
 | `--pin-endpoint` | _(none)_ | Pin a specific RPC endpoint and store it with the session. Must match `--rpc-url` when both are provided. |
 | `--no-cache` | `false` | Disable local ledger state caching for this run. |
@@ -186,11 +186,15 @@ The debug command returns explicit, actionable errors for all common failure mod
 | Invalid transaction hash | `invalid transaction hash "…" — expected 64 hexadecimal characters (got N)` |
 | Invalid `--network` | `invalid network "…" — must be one of: testnet, mainnet, futurenet` |
 | Invalid `--compare-network` | Same as above |
+| `--compare-network` equals `--network` | `--compare-network "…" must differ from --network "…"; choose two distinct networks` |
 | Missing `--wasm` with `--hot-reload` | `--hot-reload requires --wasm` |
 | Both `--xdr-file` and `--json-file` | `only one of --xdr-file or --json-file may be specified` |
 | Hash + local file conflict | `cannot specify both a transaction hash and a local envelope file` |
 | `--dry-run` with local modes | `--dry-run cannot be combined with --demo, --wasm, --load-snapshots, or local envelope input` |
 | `--pin-endpoint` mismatch | `--pin-endpoint must match --rpc-url when both are provided` |
+| `--watch-timeout` is zero or negative | `--watch-timeout must be a positive integer (got N)` |
+| Invalid `--trace-verbosity` | `invalid --trace-verbosity "…" — must be one of: summary, normal, verbose` |
+| Invalid `--format` | `invalid --format "…" — must be one of: text, json` |
 | RPC connection failure | `RPC connection failed: <underlying error>` |
 | Transaction not found | `transaction not found` — check the hash and the selected network |
 | Simulator not found | `simulator binary not found` — run `glassbox doctor --fix` |

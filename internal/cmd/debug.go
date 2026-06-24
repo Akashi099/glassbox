@@ -314,6 +314,45 @@ Local WASM Replay Mode:
 			}
 		}
 
+		// Validate that --network and --compare-network are not the same.
+		if compareNetworkFlag != "" && networkFlag != "" &&
+			strings.EqualFold(compareNetworkFlag, networkFlag) {
+			return errors.WrapValidationError(fmt.Sprintf(
+				"--compare-network %q must differ from --network %q; choose two distinct networks",
+				compareNetworkFlag, networkFlag,
+			))
+		}
+
+		// Validate --watch-timeout is positive.
+		if watchFlag && watchTimeoutFlag <= 0 {
+			return errors.WrapValidationError(fmt.Sprintf(
+				"--watch-timeout must be a positive integer (got %d)", watchTimeoutFlag,
+			))
+		}
+
+		// Validate --trace-verbosity at parse time.
+		if traceVerbosityFlag != "" {
+			if _, err := trace.ParseVerbosity(traceVerbosityFlag); err != nil {
+				return errors.WrapValidationError(fmt.Sprintf(
+					"invalid --trace-verbosity %q — must be one of: summary, normal, verbose",
+					traceVerbosityFlag,
+				))
+			}
+		}
+
+		// Validate --format at parse time.
+		if debugFormatFlag != "" {
+			switch strings.ToLower(strings.TrimSpace(debugFormatFlag)) {
+			case "text", "json":
+				// valid
+			default:
+				return errors.WrapValidationError(fmt.Sprintf(
+					"invalid --format %q — must be one of: text, json",
+					debugFormatFlag,
+				))
+			}
+		}
+
 		if liveReplayFlag && (xdrFileFlag != "" || jsonFileFlag != "") {
 			return errors.WrapValidationError("--live/--latest-ledger cannot be used with local envelope input")
 		}

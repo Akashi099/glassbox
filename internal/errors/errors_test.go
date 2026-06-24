@@ -160,3 +160,38 @@ func TestShellExitSentinel(t *testing.T) {
 	assert.True(t, errors.Is(ErrShellExit, ErrShellExit))
 	assert.False(t, errors.Is(ErrShellExit, ErrRPCConnectionFailed))
 }
+
+// --- Improved error message tests (error handling & resilience) ---
+
+func TestWrapSimulationFailed_WithStderr(t *testing.T) {
+	err := WrapSimulationFailed(fmt.Errorf("exit code 1"), "contract panicked: out of budget")
+	assert.True(t, errors.Is(err, ErrSimulationFailed))
+	assert.Contains(t, err.Error(), "simulation execution failed")
+	assert.Contains(t, err.Error(), "contract panicked")
+}
+
+func TestWrapSimulationFailed_WithoutStderr_UsesErrMessage(t *testing.T) {
+	err := WrapSimulationFailed(fmt.Errorf("runner crashed"), "")
+	assert.Contains(t, err.Error(), "simulation execution failed")
+	assert.Contains(t, err.Error(), "runner crashed")
+}
+
+func TestWrapSimulationFailed_BothNil(t *testing.T) {
+	err := WrapSimulationFailed(nil, "")
+	assert.Contains(t, err.Error(), "simulation execution failed")
+}
+
+func TestWrapCliArgumentRequired_ActionableMessage(t *testing.T) {
+	err := WrapCliArgumentRequired("audit-key")
+	assert.Contains(t, err.Error(), "--audit-key")
+	assert.Contains(t, err.Error(), "required")
+}
+
+func TestWrapInvalidNetwork_ActionableMessage(t *testing.T) {
+	err := WrapInvalidNetwork("devnet")
+	assert.True(t, errors.Is(err, ErrInvalidNetwork))
+	assert.Contains(t, err.Error(), "devnet")
+	assert.Contains(t, err.Error(), "testnet")
+	assert.Contains(t, err.Error(), "mainnet")
+	assert.Contains(t, err.Error(), "futurenet")
+}
