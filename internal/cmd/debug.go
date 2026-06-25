@@ -469,6 +469,47 @@ Local WASM Replay Mode:
 				"--pin-endpoint must match --rpc-url when both are provided; " +
 					"set them to the same URL or remove one")
 		}
+
+		// Validate all input paths using the security-aware path normalizer.
+		// This rejects null-byte injection, path traversal sequences, and
+		// non-existent files before any network or simulator work begins.
+		if err := ValidateDebugInputPaths(
+			snapshotFlag, wasmPath, xdrFileFlag, jsonFileFlag,
+			resultMetaFileFlag, loadSnapshotsFlag, sourceAliasFlag,
+		); err != nil {
+			return err
+		}
+
+		// Validate all output paths — parent directories must exist or be
+		// reachable; the target must not already be a directory.
+		if err := ValidateDebugOutputPaths(saveSnapshotsFlag, exportSVGFlag, traceOutputFile); err != nil {
+			return err
+		}
+
+		// Schema pre-flight: when a --snapshot file is provided and it is a
+		// PersistedSnapshot, check the schema version before any simulation
+		// begins so stale or future-version files surface a clear error early.
+		if snapshotFlag != "" {
+			if result, schemaErr := snapshot.CheckSchemaVersion(snapshotFlag); schemaErr == nil && result != nil {
+				if result.Unsupported || result.NeedsUpgrade {
+					return errors.WrapValidationError(fmt.Sprintf(
+						"--snapshot: %s\n"+
+							"Use 'glassbox snapshot load --path %s' to inspect the snapshot details",
+						result.Message, snapshotFlag,
+					))
+				}
+				if result.FromFuture {
+					return errors.WrapValidationError(fmt.Sprintf(
+						"--snapshot: %s",
+						result.Message,
+					))
+				}
+			}
+			// Non-nil schemaErr means the file is not a PersistedSnapshot (e.g. a
+			// plain ledger-state JSON) — skip the schema check silently; identity
+			// and fingerprint validation happens at replay time.
+		}
+
 		return nil
 	},
 	RunE: func(cmd *cobra.Command, cmdArgs []string) error {

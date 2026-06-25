@@ -113,12 +113,10 @@ func LoadPersisted(path string) (*PersistedSnapshot, error) {
 	if ps.Metadata == nil {
 		return nil, fmt.Errorf("snapshot file %s is missing metadata", path)
 	}
-	if ps.Metadata.SchemaVersion != PersistSchemaVersion {
-		return nil, fmt.Errorf(
-			"snapshot schema version %d is not supported (expected %d); "+
-				"re-run the debug command to regenerate the snapshot",
-			ps.Metadata.SchemaVersion, PersistSchemaVersion,
-		)
+	// Delegate version checking to the canonical schema validation helper so
+	// that the error messages and upgrade guidance stay in one place (schema.go).
+	if err := ValidateSchemaVersion(ps.Metadata.SchemaVersion, path); err != nil {
+		return nil, err
 	}
 	if ps.Snapshot == nil {
 		return nil, fmt.Errorf("snapshot file %s contains no ledger state", path)
