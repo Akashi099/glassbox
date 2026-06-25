@@ -47,6 +47,15 @@ type DiagnosticReport struct {
 	// HandlerMatchesSelf reports whether the registered handler points to the
 	// current executable.
 	HandlerMatchesSelf bool `json:"handler_matches_self"`
+	// ConflictDetected is true when a registration exists for the glassbox://
+	// scheme but it was written by a different application or a previous binary
+	// path that no longer matches the current executable. This is a stronger
+	// signal than a stale path because it indicates an external process owns
+	// the registration.
+	ConflictDetected bool `json:"conflict_detected,omitempty"`
+	// ConflictingHandler is the handler path that currently owns the
+	// registration when ConflictDetected is true.
+	ConflictingHandler string `json:"conflicting_handler,omitempty"`
 }
 
 // RepairResult describes the outcome of a Repair attempt.
@@ -195,21 +204,47 @@ func (r *Registrar) diagnoseWindows(report *DiagnosticReport) {
 			fmt.Sprintf("Shell open command points to current executable: %s", r.executablePath))
 	} else {
 		// Extract the registered path for the report
-		report.RegisteredHandler = strings.TrimSpace(cmdOutput)
+		registeredPath := strings.TrimSpace(cmdOutput)
+		report.RegisteredHandler = registeredPath
 		report.HandlerMatchesSelf = false
-		report.Issues = append(report.Issues,
-			fmt.Sprintf("Shell open command does not match current executable.\n  Expected: %s\n  Found:    %s",
-				expectedCmd, strings.TrimSpace(cmdOutput)))
-		report.RemediationSteps = append(report.RemediationSteps,
-			"Run 'glassbox protocol:repair' to update the registry to point to the current executable.",
-		)
+
+		// Determine whether this is a foreign-binary conflict or a stale self-reference.
+		// A conflict is when a path is registered that does not reference this binary at all
+		// (e.g. a different application claimed the scheme).
+		isConflict := registeredPath != "" &&
+			!strings.Contains(strings.ToLower(registeredPath), "glassbox") &&
+			!strings.Contains(strings.ToLower(registeredPath), strings.ToLower(Scheme))
+
+		if isConflict {
+			report.ConflictDetected = true
+			report.ConflictingHandler = registeredPath
+			report.Issues = append(report.Issues,
+				fmt.Sprintf(
+					"Protocol conflict: the glassbox:// scheme is claimed by a different application.\n"+
+						"  Conflicting handler: %s\n"+
+						"  Expected handler:    %s\n"+
+						"  Another program has registered itself as the glassbox:// handler. "+
+						"Run 'glassbox protocol:repair' to reclaim the registration.",
+					registeredPath, expectedCmd))
+			report.RemediationSteps = append(report.RemediationSteps,
+				"Run 'glassbox protocol:repair' to overwrite the conflicting registration.",
+				"If the conflicting application is still needed, uninstall or reconfigure it first.",
+				fmt.Sprintf("To manually fix: reg add %s\\shell\\open\\command /ve /d %q /f",
+					windowsRegistryKey, expectedCmd),
+			)
+		} else {
+			report.Issues = append(report.Issues,
+				fmt.Sprintf("Shell open command does not match current executable.\n  Expected: %s\n  Found:    %s\n  This is a stale path — run 'glassbox protocol:repair' to update it.",
+					expectedCmd, registeredPath))
+			report.RemediationSteps = append(report.RemediationSteps,
+				"Run 'glassbox protocol:repair' to update the registry to point to the current executable.",
+			)
+		}
 	}
 
-	// Check for registry conflicts
-	if strings.Contains(strings.ToLower(regOutput), "url:glassbox") ||
-		strings.Contains(strings.ToLower(regOutput), "url protocol") {
-		// Looks like a valid glassbox registration
-	} else {
+	// Check for registry conflicts (key exists but doesn't look like a glassbox registration)
+	if !strings.Contains(strings.ToLower(regOutput), "url:glassbox") &&
+		!strings.Contains(strings.ToLower(regOutput), "url protocol") {
 		report.Issues = append(report.Issues,
 			"Registry key exists but does not appear to be a valid glassbox:// handler")
 	}
@@ -253,11 +288,34 @@ func (r *Registrar) diagnoseDarwin(report *DiagnosticReport) {
 		} else {
 			report.RegisteredHandler = r.macOSExecutablePath()
 			report.HandlerMatchesSelf = false
-			report.Issues = append(report.Issues,
-				fmt.Sprintf("App bundle executable does not reference current binary %s", r.executablePath))
-			report.RemediationSteps = append(report.RemediationSteps,
-				"Run 'glassbox protocol:repair' to update the app bundle to the current executable path.",
-			)
+
+			// Detect whether this is a foreign-binary conflict.
+			conflictingPath := extractExecPath(execContent)
+			if conflictingPath != "" && !strings.Contains(strings.ToLower(conflictingPath), "glassbox") {
+				report.ConflictDetected = true
+				report.ConflictingHandler = conflictingPath
+				report.Issues = append(report.Issues,
+					fmt.Sprintf(
+						"Protocol conflict: app bundle references a foreign binary.\n"+
+							"  Found:    %s\n"+
+							"  Expected: %s\n"+
+							"  Another application has registered the glassbox:// scheme.",
+						conflictingPath, r.executablePath))
+				report.RemediationSteps = append(report.RemediationSteps,
+					"Run 'glassbox protocol:repair' to overwrite the conflicting registration.",
+				)
+			} else {
+				report.Issues = append(report.Issues,
+					fmt.Sprintf(
+						"App bundle executable does not reference current binary.\n"+
+							"  Found:    %s\n"+
+							"  Expected: %s\n"+
+							"  This is a stale path — run 'glassbox protocol:repair' to update it.",
+						conflictingPath, r.executablePath))
+				report.RemediationSteps = append(report.RemediationSteps,
+					"Run 'glassbox protocol:repair' to update the app bundle to the current executable path.",
+				)
+			}
 		}
 	}
 
@@ -337,11 +395,34 @@ func (r *Registrar) diagnoseLinux(report *DiagnosticReport) {
 				fmt.Sprintf("Protocol helper script launches current binary: %s", r.executablePath))
 		} else {
 			report.HandlerMatchesSelf = false
-			report.Issues = append(report.Issues,
-				fmt.Sprintf("Protocol helper script does not reference current binary %s", r.executablePath))
-			report.RemediationSteps = append(report.RemediationSteps,
-				"Run 'glassbox protocol:repair' to update the helper script to the current executable path.",
-			)
+
+			// Try to extract the conflicting path from the wrapper for diagnosis.
+			conflictingPath := extractExecPath(wrapperContent)
+			if conflictingPath != "" && !strings.Contains(strings.ToLower(conflictingPath), "glassbox") {
+				report.ConflictDetected = true
+				report.ConflictingHandler = conflictingPath
+				report.Issues = append(report.Issues,
+					fmt.Sprintf(
+						"Protocol conflict: wrapper script references a foreign binary.\n"+
+							"  Found:    %s\n"+
+							"  Expected: %s\n"+
+							"  A different application appears to have registered itself as the glassbox:// handler.",
+						conflictingPath, r.executablePath))
+				report.RemediationSteps = append(report.RemediationSteps,
+					"Run 'glassbox protocol:repair' to overwrite the conflicting registration.",
+				)
+			} else {
+				report.Issues = append(report.Issues,
+					fmt.Sprintf(
+						"Protocol helper script does not reference current binary.\n"+
+							"  Found:    %s\n"+
+							"  Expected: %s\n"+
+							"  This is a stale path — run 'glassbox protocol:repair' to update it.",
+						conflictingPath, r.executablePath))
+				report.RemediationSteps = append(report.RemediationSteps,
+					"Run 'glassbox protocol:repair' to update the helper script to the current executable path.",
+				)
+			}
 		}
 	}
 
@@ -426,4 +507,31 @@ func (r *Registrar) permissionHint(err error) string {
 		return "Writing to ~/.local/share/applications requires write permission. " +
 			"Ensure your home directory is writable and try again."
 	}
+}
+
+// extractExecPath attempts to parse the executable path from a shell handler
+// script content (e.g. "#!/bin/sh\nexec /path/to/binary protocol-handler \"$1\"\n").
+// Returns an empty string when no path can be extracted.
+func extractExecPath(scriptContent string) string {
+	for _, line := range strings.Split(scriptContent, "\n") {
+		line = strings.TrimSpace(line)
+		if !strings.HasPrefix(line, "exec ") {
+			continue
+		}
+		// Strip the "exec " prefix and take the first token (the binary path).
+		rest := strings.TrimPrefix(line, "exec ")
+		// Handle single-quoted paths produced by shellQuote().
+		if strings.HasPrefix(rest, "'") {
+			end := strings.Index(rest[1:], "'")
+			if end >= 0 {
+				return rest[1 : end+1]
+			}
+		}
+		// Handle plain unquoted paths.
+		fields := strings.Fields(rest)
+		if len(fields) > 0 {
+			return fields[0]
+		}
+	}
+	return ""
 }

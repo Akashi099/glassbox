@@ -15,8 +15,9 @@ import (
 )
 
 var (
-	sessionIDFlag string
-	sessionNameFlag string
+	sessionIDFlag          string
+	sessionNameFlag        string
+	sessionPinEndpointFlag string
 )
 
 // currentData holds the active session context from debug command
@@ -141,11 +142,15 @@ The session ID can be auto-generated or specified with --id flag.`,
 }
 
 var sessionResumeCmd = &cobra.Command{
-	Use:   "resume <session-id-or-name>",
+	Use:     "resume <session-id-or-name>",
 	Aliases: []string{"load"},
-	Short: "Restore a saved debugging session",
+	Short:   "Restore a saved debugging session",
 	Long: `Resume a previously saved debug session by ID. This restores all transaction data,
 simulation results, and analysis context from the saved session.
+
+The command runs an integrity check on the loaded session before making it
+active. Any data-consistency problems are reported with actionable hints so you
+know exactly what to fix before continuing.
 
 Use 'Glassbox session list' to see available session IDs and names.`,
 	Example: `  # Resume a session
@@ -162,31 +167,65 @@ Use 'Glassbox session list' to see available session IDs and names.`,
 		ctx := cmd.Context()
 		sessionID := args[0]
 
+		// Validate the session ID argument is non-empty.
+		if strings.TrimSpace(sessionID) == "" {
+			return errors.WrapValidationError(
+				"session ID is required\n" +
+					"Usage: glassbox session resume <session-id-or-name>\n" +
+					"Run 'glassbox session list' to see available sessions",
+			)
+		}
+
 		// Open session store
 		store, err := session.NewStore()
 		if err != nil {
-			return errors.WrapValidationError(fmt.Sprintf("failed to open session store: %v", err))
+			return errors.WrapValidationError(fmt.Sprintf(
+				"failed to open session store: %v\n"+
+					"Hint: ensure ~/.Glassbox/ is writable and not corrupted", err))
 		}
 		defer store.Close()
 
-		// Run cleanup
-		err = store.Cleanup(ctx, session.DefaultTTL, session.DefaultMaxSessions)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Warning: session cleanup failed: %v\n", err)
+		// Run cleanup (best-effort — don't fail resume on cleanup errors).
+		if cleanErr := store.Cleanup(ctx, session.DefaultTTL, session.DefaultMaxSessions); cleanErr != nil {
+			fmt.Fprintf(os.Stderr, "Warning: session cleanup failed: %v\n", cleanErr)
 		}
 
-		// Resolve session by exact ID, partial ID prefix, tx hash, or fuzzy match
-		data, err := resolveSessionInput(ctx, store, sessionID)
-		if err != nil {
-			return err
+		// Resolve session by exact ID, partial ID prefix, tx hash, or fuzzy match.
+		data, resolveErr := resolveSessionInput(ctx, store, sessionID)
+		if resolveErr != nil {
+			return fmt.Errorf(
+				"session %q not found: %w\n"+
+					"Hint: run 'glassbox session list' to see all available sessions",
+				sessionID, resolveErr,
+			)
 		}
 
-		// Check schema version compatibility
-		if data.SchemaVersion > session.SchemaVersion {
-			return errors.WrapProtocolUnsupported(uint32(data.SchemaVersion))
+		// ── Integrity check ───────────────────────────────────────────────────
+		// Run before making the session active so corrupt sessions never become
+		// the current session and cause confusing downstream failures.
+		report := session.ValidateIntegrity(data)
+		if !report.OK {
+			fmt.Fprintf(os.Stderr, "\nSession integrity check FAILED for %s:\n", data.ID)
+			for i, issue := range report.Issues {
+				fmt.Fprintf(os.Stderr, "  %d. [%s] %s\n", i+1, issue.Field, issue.Description)
+				if issue.Hint != "" {
+					fmt.Fprintf(os.Stderr, "     Hint: %s\n", issue.Hint)
+				}
+			}
+			fmt.Fprintf(os.Stderr, "\nThis session cannot be resumed safely.\n")
+			fmt.Fprintf(os.Stderr, "To remove it:  glassbox session delete %s\n", data.ID)
+			fmt.Fprintf(os.Stderr, "To re-debug:   glassbox debug %s --network %s\n",
+				data.TxHash, data.Network)
+			return fmt.Errorf("session %s failed integrity validation (%d issue(s))", data.ID, len(report.Issues))
 		}
 
-		// Update status and make it current
+		// Schema forward-compatibility check (also validated by ValidateIntegrity,
+		// but we surface a cleaner error with upgrade guidance here).
+		if !report.SchemaCompatible {
+			return errors.WrapProtocolUnsupported(uint32(report.StoredSchemaVersion))
+		}
+
+		// Update status and make it current.
 		data.Status = "resumed"
 		SetCurrentSession(data)
 
@@ -211,8 +250,8 @@ Use 'Glassbox session list' to see available session IDs and names.`,
 
 		// Show simulation results if available
 		if data.SimResponseJSON != "" {
-			resp, err := data.ToSimulationResponse()
-			if err == nil {
+			resp, simErr := data.ToSimulationResponse()
+			if simErr == nil {
 				fmt.Printf("\nSimulation Results:\n")
 				fmt.Printf("  Status: %s\n", resp.Status)
 				if resp.Error != "" {
@@ -224,16 +263,20 @@ Use 'Glassbox session list' to see available session IDs and names.`,
 				if len(resp.Logs) > 0 {
 					fmt.Printf("  Logs: %d\n", len(resp.Logs))
 				}
+			} else {
+				fmt.Fprintf(os.Stderr, "Warning: simulation response data is unreadable: %v\n", simErr)
+				fmt.Fprintf(os.Stderr, "Hint: re-run 'glassbox debug %s --network %s' to regenerate it.\n",
+					data.TxHash, data.Network)
 			}
 		}
 
 		// Show persisted viewer state if any (best-effort).
-		if uiStore, err := session.NewUIStateStore(); err == nil {
+		if uiStore, uiErr := session.NewUIStateStore(); uiErr == nil {
 			defer uiStore.Close()
-			if sections, err := uiStore.LoadSectionState(ctx, data.TxHash); err == nil && len(sections) > 0 {
+			if sections, secErr := uiStore.LoadSectionState(ctx, data.TxHash); secErr == nil && len(sections) > 0 {
 				fmt.Printf("\nViewer state: [%s]\n", strings.Join(sections, ", "))
 			}
-			if queries, err := uiStore.RecentSearches(ctx, 5); err == nil && len(queries) > 0 {
+			if queries, qErr := uiStore.RecentSearches(ctx, 5); qErr == nil && len(queries) > 0 {
 				fmt.Printf("Recent searches: %s\n", strings.Join(queries, ", "))
 			}
 		}
@@ -340,9 +383,13 @@ var sessionRecoverCmd = &cobra.Command{
 	Long: `Check for an orphaned session checkpoint left by a previous Glassbox process
 that terminated unexpectedly (crash, SIGKILL, power loss).
 
-If a recoverable checkpoint is found, the session is restored and made active so
-that 'session save' or 'session resume' can pick up where the interrupted run
-left off. The checkpoint is removed after a successful recovery.`,
+If a recoverable checkpoint is found, the session is validated for integrity and
+then restored. Any issues found during validation are reported with actionable
+hints. The checkpoint is removed after a successful recovery.
+
+If the checkpoint references a session that was never flushed to the store (the
+process crashed before saving), the stale checkpoint is cleared and guidance is
+printed so you know how to re-run the debug command.`,
 	Example: `  # Check for and restore an orphaned session
   glassbox session recover`,
 	Args: cobra.NoArgs,
@@ -351,17 +398,60 @@ left off. The checkpoint is removed after a successful recovery.`,
 
 		cp, err := session.LoadCheckpoint()
 		if err != nil {
-			return errors.WrapValidationError(fmt.Sprintf("failed to read checkpoint: %v", err))
+			// Surface a clear error when the checkpoint file exists but is malformed.
+			return fmt.Errorf(
+				"failed to read crash-recovery checkpoint: %w\n"+
+					"Hint: the checkpoint file (~/.Glassbox/active_session.json) may be corrupt.\n"+
+					"      Delete it manually to clear the error, then run 'glassbox debug' again.",
+				err,
+			)
 		}
 		if cp == nil {
 			fmt.Println("No crash-recovery checkpoint found. Nothing to recover.")
 			return nil
 		}
 
+		// Validate checkpoint fields before trusting them.
+		var cpIssues []string
+		if cp.SessionID == "" {
+			cpIssues = append(cpIssues, "checkpoint is missing the session ID")
+		}
+		if cp.TxHash == "" {
+			cpIssues = append(cpIssues, "checkpoint is missing the transaction hash")
+		}
+		if cp.Network == "" {
+			cpIssues = append(cpIssues, "checkpoint is missing the network")
+		}
+		if cp.StartedAt.IsZero() {
+			cpIssues = append(cpIssues, "checkpoint has a zero started_at timestamp")
+		}
+		if cp.PID <= 0 {
+			cpIssues = append(cpIssues, fmt.Sprintf("checkpoint has an invalid PID: %d", cp.PID))
+		}
+		if len(cpIssues) > 0 {
+			fmt.Fprintf(os.Stderr, "Checkpoint validation failed (%d issue(s)):\n", len(cpIssues))
+			for i, issue := range cpIssues {
+				fmt.Fprintf(os.Stderr, "  %d. %s\n", i+1, issue)
+			}
+			fmt.Fprintf(os.Stderr, "\nClearing corrupt checkpoint.\n")
+			fmt.Fprintf(os.Stderr, "Hint: re-run 'glassbox debug <tx-hash>' to start a fresh session.\n")
+			if clearErr := session.ClearCheckpoint(); clearErr != nil {
+				fmt.Fprintf(os.Stderr, "Warning: failed to clear checkpoint: %v\n", clearErr)
+			}
+			return fmt.Errorf("checkpoint is corrupt and cannot be recovered (%d issue(s))", len(cpIssues))
+		}
+
+		// Liveness probe: the process must be gone before we can take over the session.
 		if !cp.IsOrphaned() {
-			fmt.Printf("Checkpoint found but the owning process (PID %d) is still running.\n", cp.PID)
-			fmt.Println("Use 'glassbox session list' to view active sessions.")
-			return nil
+			fmt.Fprintf(os.Stderr,
+				"Checkpoint found but the owning process (PID %d) is still running.\n"+
+					"Hint: use 'glassbox session list' to view active sessions,\n"+
+					"      or wait for that process to exit before recovering.\n",
+				cp.PID)
+			return fmt.Errorf(
+				"process PID %d is still alive — session %s cannot be recovered yet",
+				cp.PID, cp.SessionID,
+			)
 		}
 
 		fmt.Printf("Orphaned session checkpoint detected (PID %d no longer running).\n", cp.PID)
@@ -372,32 +462,67 @@ left off. The checkpoint is removed after a successful recovery.`,
 		fmt.Println()
 
 		// Attempt to load the session from the store.
-		store, err := session.NewStore()
-		if err != nil {
-			return errors.WrapValidationError(fmt.Sprintf("failed to open session store: %v", err))
+		store, storeErr := session.NewStore()
+		if storeErr != nil {
+			return errors.WrapValidationError(fmt.Sprintf(
+				"failed to open session store: %v\n"+
+					"Hint: ensure ~/.Glassbox/ is writable and not corrupted", storeErr))
 		}
 		defer store.Close()
 
 		data, loadErr := store.Load(ctx, cp.SessionID)
 		if loadErr != nil {
-			// Checkpoint exists but session was never flushed to the store.
-			fmt.Printf("Warning: session %s not found in store (%v).\n", cp.SessionID, loadErr)
-			fmt.Println("Clearing stale checkpoint.")
-			_ = session.ClearCheckpoint()
+			// Checkpoint exists but the session was never flushed to the store
+			// (process crashed before the first save).
+			fmt.Fprintf(os.Stderr,
+				"Warning: session %s not found in the store (%v).\n"+
+					"This means the process crashed before saving any session data.\n",
+				cp.SessionID, loadErr)
+			fmt.Fprintf(os.Stderr, "Clearing stale checkpoint.\n")
+			fmt.Fprintf(os.Stderr,
+				"Hint: to re-debug, run: glassbox debug %s --network %s\n",
+				cp.TxHash, cp.Network)
+			if clearErr := session.ClearCheckpoint(); clearErr != nil {
+				fmt.Fprintf(os.Stderr, "Warning: failed to clear checkpoint: %v\n", clearErr)
+			}
 			return nil
+		}
+
+		// Integrity check on the loaded session data before making it active.
+		report := session.ValidateIntegrity(data)
+		if !report.OK {
+			fmt.Fprintf(os.Stderr, "\nSession integrity check FAILED for %s:\n", data.ID)
+			for i, issue := range report.Issues {
+				fmt.Fprintf(os.Stderr, "  %d. [%s] %s\n", i+1, issue.Field, issue.Description)
+				if issue.Hint != "" {
+					fmt.Fprintf(os.Stderr, "     Hint: %s\n", issue.Hint)
+				}
+			}
+			fmt.Fprintf(os.Stderr, "\nThe session exists in the store but has data integrity problems.\n")
+			fmt.Fprintf(os.Stderr, "To remove it:  glassbox session delete %s\n", data.ID)
+			fmt.Fprintf(os.Stderr, "To re-debug:   glassbox debug %s --network %s\n",
+				cp.TxHash, cp.Network)
+			// Clear the orphaned checkpoint even for a corrupt session so
+			// subsequent invocations don't keep hitting the same error.
+			_ = session.ClearCheckpoint()
+			return fmt.Errorf(
+				"recovered session %s failed integrity validation (%d issue(s)) — checkpoint cleared",
+				data.ID, len(report.Issues),
+			)
 		}
 
 		data.Status = "recovered"
 		data.LastAccessAt = time.Now()
-		if err := store.Save(ctx, data); err != nil {
-			return errors.WrapValidationError(fmt.Sprintf("failed to update recovered session: %v", err))
+		if saveErr := store.Save(ctx, data); saveErr != nil {
+			return errors.WrapValidationError(fmt.Sprintf(
+				"failed to update recovered session: %v", saveErr))
 		}
 
 		SetCurrentSession(data)
 
 		// Remove the checkpoint now that the session is safely restored.
-		if err := session.ClearCheckpoint(); err != nil {
-			fmt.Fprintf(os.Stderr, "Warning: failed to clear checkpoint: %v\n", err)
+		if clearErr := session.ClearCheckpoint(); clearErr != nil {
+			fmt.Fprintf(os.Stderr, "Warning: failed to clear checkpoint: %v\n", clearErr)
 		}
 
 		fmt.Printf("Session recovered: %s\n", data.ID)
@@ -410,6 +535,7 @@ left off. The checkpoint is removed after a successful recovery.`,
 func init() {
 	sessionSaveCmd.Flags().StringVar(&sessionIDFlag, "id", "", "Custom session ID (default: auto-generated)")
 	sessionSaveCmd.Flags().StringVar(&sessionNameFlag, "name", "", "Bookmark name for this session snapshot")
+	sessionSaveCmd.Flags().StringVar(&sessionPinEndpointFlag, "pin-endpoint", "", "Pin an RPC endpoint URL with this session")
 
 	sessionCmd.AddCommand(sessionSaveCmd)
 	sessionCmd.AddCommand(sessionResumeCmd)

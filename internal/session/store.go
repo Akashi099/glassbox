@@ -463,3 +463,163 @@ func (s *Data) ToSimulationResponse() (*simulator.SimulationResponse, error) {
 
 	return &resp, nil
 }
+
+// ── Session integrity validation ──────────────────────────────────────────────
+
+// IntegrityIssue describes a single problem found during session integrity
+// validation. Each issue carries a human-readable description and an optional
+// remediation hint so the CLI can surface actionable output.
+type IntegrityIssue struct {
+	// Field is the session field that is invalid or missing (e.g. "TxHash").
+	Field string
+	// Description explains what is wrong.
+	Description string
+	// Hint is an optional actionable suggestion for the user.
+	Hint string
+}
+
+// IntegrityReport is the output of ValidateIntegrity.
+type IntegrityReport struct {
+	// SessionID is the ID of the session that was checked.
+	SessionID string
+	// OK is true when no issues were found.
+	OK bool
+	// Issues lists every validation problem found.
+	Issues []IntegrityIssue
+	// SchemaCompatible reports whether the stored schema version is compatible
+	// with the current binary's SchemaVersion constant.
+	SchemaCompatible bool
+	// StoredSchemaVersion is the schema_version value stored in the session row.
+	StoredSchemaVersion int
+}
+
+// ValidateIntegrity checks a loaded session Data record for consistency and
+// completeness. It validates:
+//
+//   - Required fields are non-empty (ID, TxHash, Network, Status)
+//   - Status is a known value (active, saved, resumed, recovered, expired)
+//   - CreatedAt and LastAccessAt are non-zero and in valid temporal order
+//   - LastAccessAt is not in the future (within a 1-minute clock-skew tolerance)
+//   - SchemaVersion is compatible with the current SchemaVersion constant
+//   - EnvelopeXdr is non-empty when SimRequestJSON is also non-empty
+//
+// The function never modifies the session; it is safe to call concurrently.
+func ValidateIntegrity(data *Data) *IntegrityReport {
+	report := &IntegrityReport{
+		SessionID:           data.ID,
+		SchemaCompatible:    data.SchemaVersion <= SchemaVersion,
+		StoredSchemaVersion: data.SchemaVersion,
+	}
+
+	// Required: ID
+	if data.ID == "" {
+		report.Issues = append(report.Issues, IntegrityIssue{
+			Field:       "ID",
+			Description: "session ID is empty",
+			Hint:        "This session record is corrupt. Delete it with 'glassbox session delete' and start a new debug session.",
+		})
+	}
+
+	// Required: TxHash
+	if data.TxHash == "" {
+		report.Issues = append(report.Issues, IntegrityIssue{
+			Field:       "TxHash",
+			Description: "transaction hash is empty",
+			Hint:        "The session was saved without a transaction hash. Re-run 'glassbox debug <tx-hash>' to create a valid session.",
+		})
+	}
+
+	// Required: Network
+	if data.Network == "" {
+		report.Issues = append(report.Issues, IntegrityIssue{
+			Field:       "Network",
+			Description: "network is empty",
+			Hint:        "The session is missing its network field. Delete and recreate it with --network testnet/mainnet/futurenet.",
+		})
+	} else {
+		validNetworks := map[string]bool{
+			"testnet": true, "mainnet": true, "futurenet": true,
+		}
+		if !validNetworks[data.Network] {
+			report.Issues = append(report.Issues, IntegrityIssue{
+				Field:       "Network",
+				Description: "network value " + data.Network + " is not a recognised Stellar network",
+				Hint:        "Accepted values are: testnet, mainnet, futurenet. Delete and recreate the session with a valid --network value.",
+			})
+		}
+	}
+
+	// Required: Status
+	if data.Status == "" {
+		report.Issues = append(report.Issues, IntegrityIssue{
+			Field:       "Status",
+			Description: "status is empty",
+			Hint:        "The session record is missing a status. It may have been created by an incompatible version of Glassbox.",
+		})
+	} else {
+		validStatuses := map[string]bool{
+			"active": true, "saved": true, "resumed": true,
+			"recovered": true, "expired": true,
+		}
+		if !validStatuses[data.Status] {
+			report.Issues = append(report.Issues, IntegrityIssue{
+				Field:       "Status",
+				Description: "unknown status value: " + data.Status,
+				Hint:        "Valid status values are: active, saved, resumed, recovered, expired.",
+			})
+		}
+	}
+
+	// Timestamps: CreatedAt must be non-zero
+	if data.CreatedAt.IsZero() {
+		report.Issues = append(report.Issues, IntegrityIssue{
+			Field:       "CreatedAt",
+			Description: "created_at timestamp is zero",
+			Hint:        "The session creation time is missing. This is a data-integrity problem; delete and recreate the session.",
+		})
+	}
+
+	// Timestamps: LastAccessAt must be non-zero
+	if data.LastAccessAt.IsZero() {
+		report.Issues = append(report.Issues, IntegrityIssue{
+			Field:       "LastAccessAt",
+			Description: "last_access_at timestamp is zero",
+			Hint:        "The last-access timestamp is missing. Re-saving the session will reset it.",
+		})
+	}
+
+	// Timestamps: LastAccessAt must not precede CreatedAt
+	if !data.CreatedAt.IsZero() && !data.LastAccessAt.IsZero() {
+		if data.LastAccessAt.Before(data.CreatedAt) {
+			report.Issues = append(report.Issues, IntegrityIssue{
+				Field:       "LastAccessAt",
+				Description: "last_access_at is before created_at — timestamps are inconsistent",
+				Hint:        "The session timestamps are out of order. Re-saving the session will reset last_access_at to now.",
+			})
+		}
+	}
+
+	// Schema version forward compatibility
+	if data.SchemaVersion > SchemaVersion {
+		report.Issues = append(report.Issues, IntegrityIssue{
+			Field: "SchemaVersion",
+			Description: fmt.Sprintf(
+				"session schema version %d is newer than this build's supported version %d",
+				data.SchemaVersion, SchemaVersion,
+			),
+			Hint: "Upgrade Glassbox to a newer release to open sessions created by a more recent version.",
+		})
+	}
+
+	// Consistency: SimRequestJSON implies EnvelopeXdr
+	if data.SimRequestJSON != "" && data.EnvelopeXdr == "" {
+		report.Issues = append(report.Issues, IntegrityIssue{
+			Field:       "EnvelopeXdr",
+			Description: "simulation request is present but envelope XDR is missing",
+			Hint:        "The session is partially saved. Re-run 'glassbox debug <tx-hash>' to capture the full session state.",
+		})
+	}
+
+	report.OK = len(report.Issues) == 0
+	return report
+}

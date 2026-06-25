@@ -116,9 +116,19 @@ func (r *Registrar) Verify() (*VerificationReport, error) {
 func (r *Registrar) registerWindows() error {
 	// Detect Protocol Registry Conflicts (Issue #1198)
 	registryOutput, err := runCommand("reg", "query", windowsRegistryKey, "/ve")
-	if err == nil && !strings.Contains(registryOutput, "glassbox") {
-		// If the key exists (err == nil) but (Default) doesn't contain 'glassbox', it's a conflict
-		return errors.Join(fmt.Errorf("registry conflict for %s", Scheme), ersterrors.ErrRegistryConflict)
+	if err == nil {
+		// The key exists. Check whether it belongs to a different application by
+		// verifying the shell\open\command value points to this binary.
+		cmdOutput, cmdErr := runCommand("reg", "query", windowsRegistryKey+`\shell\open\command`, "/ve")
+		if cmdErr == nil && !strings.Contains(cmdOutput, r.executablePath) {
+			// The key exists and its open command references a different binary —
+			// this is a genuine registry conflict, not just a stale self-reference.
+			return ersterrors.ErrRegistryConflict
+		}
+		if !strings.Contains(registryOutput, "glassbox") {
+			// If the key exists (err == nil) but (Default) doesn't contain 'glassbox', it's a conflict
+			return ersterrors.ErrRegistryConflict
+		}
 	}
 
 	commands := [][]string{

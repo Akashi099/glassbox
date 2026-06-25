@@ -9,6 +9,7 @@ import (
 	"os/exec"
 
 	"github.com/dotandev/glassbox/internal/clioutput"
+	"github.com/dotandev/glassbox/internal/deeplink"
 	"github.com/dotandev/glassbox/internal/protocolreg"
 	"github.com/spf13/cobra"
 )
@@ -223,6 +224,16 @@ Exit codes:
 			fmt.Fprintf(cmd.OutOrStdout(), "Registered handler: %s\n", report.RegisteredHandler)
 			if report.HandlerMatchesSelf {
 				fmt.Fprintf(cmd.OutOrStdout(), "Handler matches current executable: yes\n")
+			} else if report.ConflictDetected {
+				// Conflict: a foreign binary owns the registration.
+				fmt.Fprintf(cmd.ErrOrStderr(),
+					"Handler matches current executable: NO (conflict — registered handler is %s)\n",
+					report.ConflictingHandler)
+				fmt.Fprintf(cmd.ErrOrStderr(),
+					"⚠  Protocol conflict detected: the glassbox:// scheme is currently handled by\n"+
+						"   a different binary (%s).\n"+
+						"   Run 'glassbox protocol:repair' to reclaim the registration.\n",
+					report.ConflictingHandler)
 			} else {
 				fmt.Fprintf(cmd.ErrOrStderr(), "Handler matches current executable: NO (stale path)\n")
 			}
@@ -236,6 +247,12 @@ Exit codes:
 		}
 
 		if report.Status != protocolreg.StatusOK {
+			if report.ConflictDetected {
+				return fmt.Errorf(
+					"protocol registration conflict: glassbox:// is claimed by %s — run 'glassbox protocol:repair' to resolve",
+					report.ConflictingHandler,
+				)
+			}
 			return fmt.Errorf("protocol registration is %s", report.Status)
 		}
 		return nil
