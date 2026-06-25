@@ -30,80 +30,181 @@ var authDebugCmd = &cobra.Command{
 	Short:   "Debug multi-signature and threshold-based authorization failures",
 	Long: `Analyze multi-signature authorization flows and identify which signatures or thresholds failed.
 
+The transaction hash, --network, and --rpc-url are all validated before any
+network call is made, so malformed input fails fast with an explicit message
+instead of a low-level RPC error.
+
 Examples:
-  Glassbox auth-debug <tx-hash>
-  Glassbox auth-debug --detailed <tx-hash>
-  Glassbox auth-debug --json <tx-hash>`,
-	Args: cobra.ExactArgs(1),
-	PreRunE: func(cmd *cobra.Command, args []string) error {
-		if !cmd.Flags().Changed("network") {
-			token := "" // auth_debug doesn't have a token flag, check env/config
-			token = os.Getenv("GLASSBOX_RPC_TOKEN")
-			if token == "" {
-				if cfg, err := config.LoadConfig(); err == nil && cfg.RPCToken != "" {
-					token = cfg.RPCToken
-				}
-			}
-			probeCtx, probeCancel := context.WithTimeout(cmd.Context(), 5*time.Second)
-			defer probeCancel()
-			if resolved, err := rpc.ResolveNetwork(probeCtx, args[0], token); err == nil {
-				authNetworkFlag = string(resolved)
-				fmt.Printf("Resolved network: %s\n", authNetworkFlag)
-			}
-		}
-		return validateNetworkName(authNetworkFlag)
-	},
-	RunE: func(cmd *cobra.Command, args []string) error {
-		txHash := args[0]
+  glassbox auth-debug <tx-hash>
+  glassbox auth-debug --detailed <tx-hash>
+  glassbox auth-debug --json <tx-hash>
+  glassbox auth-debug --network testnet <tx-hash>`,
+	Args:    cobra.ExactArgs(1),
+	PreRunE: authDebugPreRunE,
+	RunE:    authDebugRunE,
+}
 
-		opts, err := networkClientOptions(authNetworkFlag)
+// authDebugPreRunE validates all inputs before any network connection is made.
+// Invalid conditions (malformed transaction hash, unsupported network, or a
+// badly formed --rpc-url) are rejected here with explicit, actionable messages.
+func authDebugPreRunE(cmd *cobra.Command, args []string) error {
+	// Validate the transaction hash and --rpc-url up front, before touching the
+	// network. validateNetworkName is re-checked below against the possibly
+	// auto-resolved network value.
+	if err := validateAuthDebugInputs(args[0], authNetworkFlag, authRPCURLFlag); err != nil {
+		return err
+	}
+
+	// When --network was not explicitly provided, try to auto-detect it from the
+	// transaction. This only runs after the hash is known to be well-formed.
+	if !cmd.Flags().Changed("network") {
+		token := authResolveRPCToken()
+		probeCtx, probeCancel := context.WithTimeout(cmd.Context(), 5*time.Second)
+		defer probeCancel()
+		if resolved, err := rpc.ResolveNetwork(probeCtx, args[0], token); err == nil {
+			authNetworkFlag = string(resolved)
+			fmt.Printf("Resolved network: %s\n", authNetworkFlag)
+		}
+	}
+
+	return validateNetworkName(authNetworkFlag)
+}
+
+// validateAuthDebugInputs performs the input validation for the auth-debug
+// command without any network access, so it can be exercised directly in tests.
+// It rejects, in order: a malformed transaction hash, a badly formed --rpc-url,
+// and an unknown network name.
+func validateAuthDebugInputs(txHash, network, rpcURL string) error {
+	if err := rpc.ValidateTransactionHash(txHash); err != nil {
+		return errors.WrapValidationError(fmt.Sprintf(
+			"invalid transaction hash %q: %v\n"+
+				"  Transaction hashes must be exactly 64 hexadecimal characters.\n"+
+				"  Example: glassbox auth-debug 5c0a1234567890abcdef1234567890abcdef1234567890abcdef1234567890ab",
+			txHash, err))
+	}
+
+	if rpcURL != "" {
+		if err := validateRPCURL(rpcURL); err != nil {
+			return errors.WrapValidationError(fmt.Sprintf(
+				"--rpc-url %q is not valid: %v\n"+
+					"  Provide an http(s) URL, e.g. --rpc-url https://horizon-testnet.stellar.org",
+				rpcURL, err))
+		}
+	}
+
+	if err := validateNetworkName(network); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// authResolveRPCToken resolves the RPC token from the environment first and then
+// from config, matching the precedence used elsewhere in the CLI.
+func authResolveRPCToken() string {
+	if token := os.Getenv("GLASSBOX_RPC_TOKEN"); token != "" {
+		return token
+	}
+	if cfg, err := config.LoadConfig(); err == nil && cfg.RPCToken != "" {
+		return cfg.RPCToken
+	}
+	return ""
+}
+
+func authDebugRunE(cmd *cobra.Command, args []string) error {
+	txHash := args[0]
+
+	// --detailed only affects the human-readable report; in JSON mode the full
+	// detail is always emitted. Surface the no-op so the user is not surprised.
+	if authJSONOutputFlag && authDetailedFlag {
+		fmt.Fprintln(os.Stderr, "note: --detailed has no effect together with --json; JSON output already includes full detail")
+	}
+
+	opts := []rpc.ClientOption{rpc.WithToken(authResolveRPCToken())}
+	if authRPCURLFlag != "" {
+		opts = append(opts, rpc.WithHorizonURL(authRPCURLFlag))
+	}
+
+	// networkClientOptions already returns an explicit, actionable error for an
+	// unknown network, so it is propagated unchanged rather than re-wrapped.
+	client, err := newClientForNetwork(authNetworkFlag, opts...)
+	if err != nil {
+		return err
+	}
+
+	logger.Logger.Info("Fetching transaction for auth analysis", "tx_hash", txHash)
+
+	// GetTransaction already returns precise, hinted errors (transaction not
+	// found vs. RPC connection failure). Propagate them verbatim instead of
+	// flattening every failure into a generic "connection failed".
+	resp, err := client.GetTransaction(cmd.Context(), txHash)
+	if err != nil {
+		return err
+	}
+
+	if len(resp.EnvelopeXdr) == 0 {
+		return errors.WrapValidationError(fmt.Sprintf(
+			"transaction %s was fetched but its envelope is empty; authorization cannot be analyzed\n"+
+				"  Confirm the hash is correct and that --network matches where the transaction was submitted, then retry.",
+			txHash))
+	}
+
+	fmt.Printf("Transaction Envelope: %d bytes\n", len(resp.EnvelopeXdr))
+
+	traceConfig := authtrace.Config{
+		TraceCustomContracts: true,
+		CaptureSigDetails:    true,
+		MaxEventDepth:        1000,
+	}
+
+	tracker := authtrace.NewTracker(traceConfig)
+	trace := tracker.GenerateTrace()
+	reporter := authtrace.NewDetailedReporter(trace)
+
+	// When no authorization events were extracted, the report's "SUCCEEDED"
+	// status only means "no failures were recorded" — not that authorization was
+	// verified. Make that explicit so the output is not misread as a pass.
+	if !authTraceHasData(trace) {
+		fmt.Fprintln(os.Stderr, emptyAuthTraceNote(txHash))
+	}
+
+	if authJSONOutputFlag {
+		jsonStr, err := reporter.GenerateJSONString()
 		if err != nil {
-			return errors.WrapValidationError(fmt.Sprintf("failed to build client options: %v", err))
+			return errors.WrapMarshalFailed(err)
 		}
-		opts = append(opts, rpc.WithToken(os.Getenv("GLASSBOX_RPC_TOKEN")))
-		if authRPCURLFlag != "" {
-			opts = append(opts, rpc.WithHorizonURL(authRPCURLFlag))
-		}
-
-		client, err := rpc.NewClient(opts...)
-		if err != nil {
-			return errors.WrapValidationError(fmt.Sprintf("failed to create client: %v", err))
-		}
-
-		logger.Logger.Info("Fetching transaction for auth analysis", "tx_hash", txHash)
-
-		resp, err := client.GetTransaction(cmd.Context(), txHash)
-		if err != nil {
-			return errors.WrapRPCConnectionFailed(err)
-		}
-
-		fmt.Printf("Transaction Envelope: %d bytes\n", len(resp.EnvelopeXdr))
-
-		config := authtrace.Config{
-			TraceCustomContracts: true,
-			CaptureSigDetails:    true,
-			MaxEventDepth:        1000,
-		}
-
-		tracker := authtrace.NewTracker(config)
-		trace := tracker.GenerateTrace()
-		reporter := authtrace.NewDetailedReporter(trace)
-
-		if authJSONOutputFlag {
-			jsonStr, err := reporter.GenerateJSONString()
-			if err != nil {
-				return err
-			}
-			fmt.Println(jsonStr)
-		} else {
-			fmt.Println(reporter.GenerateReport())
-			if authDetailedFlag {
-				printDetailedAnalysis(reporter)
-			}
-		}
-
+		fmt.Println(jsonStr)
 		return nil
-	},
+	}
+
+	fmt.Println(reporter.GenerateReport())
+	if authDetailedFlag {
+		printDetailedAnalysis(reporter)
+	}
+
+	return nil
+}
+
+// authTraceHasData reports whether the trace carries any authorization signal
+// (events or recorded failures). An empty trace produces a misleading
+// "SUCCEEDED" report, so callers use this to attach an explanatory note.
+func authTraceHasData(trace *authtrace.AuthTrace) bool {
+	if trace == nil {
+		return false
+	}
+	return len(trace.AuthEvents) > 0 || len(trace.Failures) > 0
+}
+
+// emptyAuthTraceNote returns the diagnostic shown when no authorization data was
+// extracted from a transaction, so an empty "SUCCEEDED" report is not mistaken
+// for a verified-successful authorization.
+func emptyAuthTraceNote(txHash string) string {
+	return fmt.Sprintf(
+		"warning: no authorization events were extracted from transaction %s.\n"+
+			"  The report below reflects \"no failures recorded\", not a verified-successful authorization.\n"+
+			"  This is expected for transactions that contain no Soroban authorization entries.\n"+
+			"  Verify the hash and --network, or run 'glassbox doctor' if you expected auth data.",
+		txHash)
 }
 
 func printDetailedAnalysis(reporter *authtrace.DetailedReporter) {
