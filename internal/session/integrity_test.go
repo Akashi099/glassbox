@@ -1,0 +1,314 @@
+// Copyright 2026 Glassbox Users
+// SPDX-License-Identifier: Apache-2.0
+
+package session
+
+import (
+	"strings"
+	"testing"
+	"time"
+)
+
+// ── helpers ───────────────────────────────────────────────────────────────────
+
+// validData returns a fully populated Data record that passes all integrity
+// checks. Individual tests mutate a copy to exercise specific failure paths.
+func validData() *Data {
+	now := time.Now()
+	return &Data{
+		ID:           "session-abc123",
+		TxHash:       "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+		Network:      "testnet",
+		Status:       "saved",
+		CreatedAt:    now.Add(-10 * time.Minute),
+		LastAccessAt: now,
+		SchemaVersion: SchemaVersion,
+	}
+}
+
+// ── ValidateIntegrity — happy path ────────────────────────────────────────────
+
+func TestValidateIntegrity_ValidSession_OK(t *testing.T) {
+	report := ValidateIntegrity(validData())
+	if !report.OK {
+		t.Errorf("expected OK=true for valid session, got issues: %v", report.Issues)
+	}
+	if len(report.Issues) != 0 {
+		t.Errorf("expected zero issues for valid session, got %d: %v", len(report.Issues), report.Issues)
+	}
+	if !report.SchemaCompatible {
+		t.Error("expected SchemaCompatible=true for current schema version")
+	}
+}
+
+func TestValidateIntegrity_ReportsSessionID(t *testing.T) {
+	d := validData()
+	d.ID = "my-session"
+	report := ValidateIntegrity(d)
+	if report.SessionID != "my-session" {
+		t.Errorf("report.SessionID = %q, want %q", report.SessionID, "my-session")
+	}
+}
+
+// ── Required field validation ─────────────────────────────────────────────────
+
+func TestValidateIntegrity_EmptyID_ReportsIssue(t *testing.T) {
+	d := validData()
+	d.ID = ""
+	report := ValidateIntegrity(d)
+	if report.OK {
+		t.Fatal("expected OK=false when ID is empty")
+	}
+	requireIssueField(t, report, "ID")
+}
+
+func TestValidateIntegrity_EmptyTxHash_ReportsIssue(t *testing.T) {
+	d := validData()
+	d.TxHash = ""
+	report := ValidateIntegrity(d)
+	if report.OK {
+		t.Fatal("expected OK=false when TxHash is empty")
+	}
+	requireIssueField(t, report, "TxHash")
+}
+
+func TestValidateIntegrity_EmptyNetwork_ReportsIssue(t *testing.T) {
+	d := validData()
+	d.Network = ""
+	report := ValidateIntegrity(d)
+	if report.OK {
+		t.Fatal("expected OK=false when Network is empty")
+	}
+	requireIssueField(t, report, "Network")
+}
+
+func TestValidateIntegrity_InvalidNetwork_ReportsIssue(t *testing.T) {
+	d := validData()
+	d.Network = "devnet" // not a valid Stellar network
+	report := ValidateIntegrity(d)
+	if report.OK {
+		t.Fatal("expected OK=false for unrecognised network")
+	}
+	requireIssueField(t, report, "Network")
+	// Issue description should name the bad value.
+	for _, issue := range report.Issues {
+		if issue.Field == "Network" && !strings.Contains(issue.Description, "devnet") {
+			t.Errorf("issue description should name the invalid value 'devnet', got: %q", issue.Description)
+		}
+	}
+}
+
+func TestValidateIntegrity_AllValidNetworks_OK(t *testing.T) {
+	for _, net := range []string{"testnet", "mainnet", "futurenet"} {
+		d := validData()
+		d.Network = net
+		report := ValidateIntegrity(d)
+		for _, issue := range report.Issues {
+			if issue.Field == "Network" {
+				t.Errorf("valid network %q should not produce a Network issue, got: %v", net, issue)
+			}
+		}
+	}
+}
+
+// ── Status validation ─────────────────────────────────────────────────────────
+
+func TestValidateIntegrity_EmptyStatus_ReportsIssue(t *testing.T) {
+	d := validData()
+	d.Status = ""
+	report := ValidateIntegrity(d)
+	if report.OK {
+		t.Fatal("expected OK=false when Status is empty")
+	}
+	requireIssueField(t, report, "Status")
+}
+
+func TestValidateIntegrity_UnknownStatus_ReportsIssue(t *testing.T) {
+	d := validData()
+	d.Status = "corrupted"
+	report := ValidateIntegrity(d)
+	if report.OK {
+		t.Fatal("expected OK=false for unknown status")
+	}
+	requireIssueField(t, report, "Status")
+}
+
+func TestValidateIntegrity_AllValidStatuses_OK(t *testing.T) {
+	for _, status := range []string{"active", "saved", "resumed", "recovered", "expired"} {
+		d := validData()
+		d.Status = status
+		report := ValidateIntegrity(d)
+		for _, issue := range report.Issues {
+			if issue.Field == "Status" {
+				t.Errorf("valid status %q should not produce a Status issue, got: %v", status, issue)
+			}
+		}
+	}
+}
+
+// ── Timestamp validation ──────────────────────────────────────────────────────
+
+func TestValidateIntegrity_ZeroCreatedAt_ReportsIssue(t *testing.T) {
+	d := validData()
+	d.CreatedAt = time.Time{}
+	report := ValidateIntegrity(d)
+	if report.OK {
+		t.Fatal("expected OK=false when CreatedAt is zero")
+	}
+	requireIssueField(t, report, "CreatedAt")
+}
+
+func TestValidateIntegrity_ZeroLastAccessAt_ReportsIssue(t *testing.T) {
+	d := validData()
+	d.LastAccessAt = time.Time{}
+	report := ValidateIntegrity(d)
+	if report.OK {
+		t.Fatal("expected OK=false when LastAccessAt is zero")
+	}
+	requireIssueField(t, report, "LastAccessAt")
+}
+
+func TestValidateIntegrity_LastAccessBeforeCreated_ReportsIssue(t *testing.T) {
+	d := validData()
+	// Flip: last access is before creation time.
+	d.CreatedAt = time.Now()
+	d.LastAccessAt = time.Now().Add(-5 * time.Minute)
+	report := ValidateIntegrity(d)
+	if report.OK {
+		t.Fatal("expected OK=false when last_access_at is before created_at")
+	}
+	requireIssueField(t, report, "LastAccessAt")
+}
+
+func TestValidateIntegrity_LastAccessEqualsCreated_OK(t *testing.T) {
+	d := validData()
+	ts := time.Now()
+	d.CreatedAt = ts
+	d.LastAccessAt = ts // same moment is valid
+	report := ValidateIntegrity(d)
+	for _, issue := range report.Issues {
+		if issue.Field == "LastAccessAt" {
+			t.Errorf("equal timestamps should not produce a LastAccessAt issue, got: %v", issue)
+		}
+	}
+}
+
+// ── Schema version compatibility ──────────────────────────────────────────────
+
+func TestValidateIntegrity_NewerSchema_IncompatibleAndIssue(t *testing.T) {
+	d := validData()
+	d.SchemaVersion = SchemaVersion + 99
+	report := ValidateIntegrity(d)
+	if report.SchemaCompatible {
+		t.Error("expected SchemaCompatible=false for a newer schema version")
+	}
+	if report.OK {
+		t.Fatal("expected OK=false for incompatible schema version")
+	}
+	requireIssueField(t, report, "SchemaVersion")
+}
+
+func TestValidateIntegrity_OlderSchema_Compatible(t *testing.T) {
+	d := validData()
+	if SchemaVersion > 1 {
+		d.SchemaVersion = SchemaVersion - 1
+		report := ValidateIntegrity(d)
+		if !report.SchemaCompatible {
+			t.Error("expected SchemaCompatible=true for an older (still supported) schema version")
+		}
+	}
+}
+
+func TestValidateIntegrity_CurrentSchema_Compatible(t *testing.T) {
+	d := validData()
+	d.SchemaVersion = SchemaVersion
+	report := ValidateIntegrity(d)
+	if !report.SchemaCompatible {
+		t.Error("expected SchemaCompatible=true for current schema version")
+	}
+}
+
+// ── Consistency: SimRequestJSON implies EnvelopeXdr ───────────────────────────
+
+func TestValidateIntegrity_SimRequestWithoutEnvelope_ReportsIssue(t *testing.T) {
+	d := validData()
+	d.SimRequestJSON = `{"envelope_xdr":"abc"}`
+	d.EnvelopeXdr = "" // missing envelope
+	report := ValidateIntegrity(d)
+	if report.OK {
+		t.Fatal("expected OK=false when SimRequestJSON is set but EnvelopeXdr is empty")
+	}
+	requireIssueField(t, report, "EnvelopeXdr")
+}
+
+func TestValidateIntegrity_SimRequestWithEnvelope_OK(t *testing.T) {
+	d := validData()
+	d.SimRequestJSON = `{"envelope_xdr":"abc"}`
+	d.EnvelopeXdr = "base64-xdr-data"
+	report := ValidateIntegrity(d)
+	for _, issue := range report.Issues {
+		if issue.Field == "EnvelopeXdr" {
+			t.Errorf("should not issue EnvelopeXdr problem when both fields are set, got: %v", issue)
+		}
+	}
+}
+
+// ── Hints are non-empty for all issues ────────────────────────────────────────
+
+func TestValidateIntegrity_AllIssuesHaveHints(t *testing.T) {
+	scenarios := []*Data{
+		func() *Data { d := validData(); d.ID = ""; return d }(),
+		func() *Data { d := validData(); d.TxHash = ""; return d }(),
+		func() *Data { d := validData(); d.Network = ""; return d }(),
+		func() *Data { d := validData(); d.Network = "badnet"; return d }(),
+		func() *Data { d := validData(); d.Status = ""; return d }(),
+		func() *Data { d := validData(); d.Status = "invalid"; return d }(),
+		func() *Data { d := validData(); d.CreatedAt = time.Time{}; return d }(),
+		func() *Data { d := validData(); d.LastAccessAt = time.Time{}; return d }(),
+		func() *Data {
+			d := validData()
+			d.CreatedAt = time.Now()
+			d.LastAccessAt = time.Now().Add(-time.Minute)
+			return d
+		}(),
+		func() *Data { d := validData(); d.SchemaVersion = SchemaVersion + 1; return d }(),
+		func() *Data { d := validData(); d.SimRequestJSON = "x"; d.EnvelopeXdr = ""; return d }(),
+	}
+
+	for i, d := range scenarios {
+		report := ValidateIntegrity(d)
+		for _, issue := range report.Issues {
+			if strings.TrimSpace(issue.Hint) == "" {
+				t.Errorf("scenario %d: issue for field %q has an empty hint", i, issue.Field)
+			}
+		}
+	}
+}
+
+// ── Multiple issues accumulate ────────────────────────────────────────────────
+
+func TestValidateIntegrity_MultipleProblems_AllReported(t *testing.T) {
+	d := &Data{
+		// ID, TxHash, Network, Status all empty — 4 issues minimum
+		SchemaVersion: SchemaVersion,
+		CreatedAt:     time.Now(),
+		LastAccessAt:  time.Now(),
+	}
+	report := ValidateIntegrity(d)
+	if len(report.Issues) < 4 {
+		t.Errorf("expected at least 4 issues for a mostly-empty session, got %d: %v", len(report.Issues), report.Issues)
+	}
+}
+
+// ── helpers ───────────────────────────────────────────────────────────────────
+
+// requireIssueField asserts that at least one issue targets the named field.
+func requireIssueField(t *testing.T, report *IntegrityReport, field string) {
+	t.Helper()
+	for _, issue := range report.Issues {
+		if issue.Field == field {
+			return
+		}
+	}
+	t.Errorf("expected an issue for field %q, got: %v", field, report.Issues)
+}

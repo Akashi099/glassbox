@@ -439,7 +439,153 @@ selected network, and unsupported Soroban protocol versions.
 
 ---
 
-## See Also
+## Protocol Conflict Resolution
+
+The `glassbox://` deep-link scheme must be registered with the OS before protocol URIs dispatched from browsers or other tools can reach the CLI. If another application registers itself as the `glassbox://` handler (a **protocol conflict**), deep links silently open the wrong program.
+
+### Detecting conflicts
+
+```sh
+glassbox protocol:diagnose
+```
+
+The command checks every registration artefact on the current platform and reports the overall status. When a conflict is detected it prints a clear warning and names the conflicting binary:
+
+```
+[FAIL] Protocol conflict: the glassbox:// scheme is claimed by a different application.
+  Conflicting handler: /usr/bin/otherapp
+  Expected handler:    /usr/local/bin/glassbox
+  Another program has registered itself as the glassbox:// handler.
+  Run 'glassbox protocol:repair' to reclaim the registration.
+
+⚠  Protocol conflict detected: the glassbox:// scheme is currently handled by
+   a different binary (/usr/bin/otherapp).
+   Run 'glassbox protocol:repair' to reclaim the registration.
+
+Remediation steps:
+  1. Run 'glassbox protocol:repair' to overwrite the conflicting registration.
+  2. If the conflicting application is still needed, uninstall or reconfigure it first.
+```
+
+**Conflict vs stale path:** Glassbox distinguishes between two cases:
+- **Conflict** — a foreign binary (no "glassbox" in its path) owns the scheme. Logged as `ConflictDetected=true`.
+- **Stale path** — an older Glassbox binary is registered. Logged as a stale path (no conflict flag). Both are fixed by `protocol:repair`.
+
+**Exit codes for `protocol:diagnose`:**
+- `0` — registration is healthy
+- `1` — registration is missing, stale, or conflicting
+
+### Resolving conflicts
+
+```sh
+# Automatic repair (recommended)
+glassbox protocol:repair
+
+# Or re-register manually
+glassbox protocol:register
+```
+
+`protocol:repair` runs `protocol:diagnose` first, then overwrites the registration with the current binary. A post-repair verification confirms the fix succeeded.
+
+**JSON output** for CI pipelines:
+
+```sh
+glassbox protocol:diagnose --json
+```
+
+The `conflict_detected` and `conflicting_handler` fields are included in the JSON output so automated checks can distinguish conflicts from simple missing registrations.
+
+### Handling `protocol:handle` errors
+
+The `protocol:handle` sub-command parses and dispatches `glassbox://debug/…` URIs. It validates each field before executing:
+
+| URI problem | Error |
+|---|---|
+| Empty URI | `protocol URI must not be empty` |
+| Wrong scheme | `invalid protocol URI: expected glassbox://` |
+| Missing transaction hash | `invalid transaction hash "": must be a 64-character hex string` |
+| Invalid network | `invalid network "…": must be one of testnet, mainnet, futurenet` |
+| Negative op index | `invalid operation index "…": must be a non-negative integer` |
+| Unknown view | `invalid view "…": must be one of trace, flamegraph, events, auth, budget, storage` |
+
+---
+
+## Session Recovery and Integrity
+
+### Crash recovery
+
+When Glassbox is interrupted unexpectedly (crash, SIGKILL, power loss), the active session may be left in a partially saved state. On the next invocation, run:
+
+```sh
+glassbox session recover
+```
+
+The command:
+1. Reads the crash-recovery checkpoint at `~/.Glassbox/active_session.json`
+2. Validates all checkpoint fields (session ID, tx hash, network, PID, timestamp) before trusting them
+3. Probes whether the originating process is still alive
+4. Loads the session from the store and runs a full **integrity check** before making it active
+5. Clears the checkpoint after successful recovery
+
+If the checkpoint is corrupt or the session fails integrity validation, a numbered list of issues is printed with per-issue hints and remediation commands:
+
+```
+Checkpoint validation failed (2 issue(s)):
+  1. checkpoint is missing the transaction hash
+  2. checkpoint has an invalid PID: 0
+
+Clearing corrupt checkpoint.
+Hint: re-run 'glassbox debug <tx-hash>' to start a fresh session.
+```
+
+```
+Session integrity check FAILED for session-abc123:
+  1. [TxHash] transaction hash is empty
+     Hint: The session was saved without a transaction hash. Re-run 'glassbox debug <tx-hash>'.
+  2. [Network] network value "devnet" is not a recognised Stellar network
+     Hint: Accepted values are: testnet, mainnet, futurenet.
+
+The session exists in the store but has data integrity problems.
+To remove it:  glassbox session delete session-abc123
+To re-debug:   glassbox debug <tx-hash> --network <network>
+```
+
+### Integrity validation on `session resume`
+
+`glassbox session resume` also runs an integrity check before activating any session. Corrupt sessions are blocked from becoming active, and the output names every failing field with a hint:
+
+```
+Session integrity check FAILED for corrupt-session:
+  1. [TxHash] transaction hash is empty
+     Hint: Re-run 'glassbox debug <tx-hash>' to create a valid session.
+
+This session cannot be resumed safely.
+To remove it:  glassbox session delete corrupt-session
+To re-debug:   glassbox debug  --network testnet
+```
+
+**Fields validated by the integrity check:**
+
+| Field | Check |
+|---|---|
+| `ID` | Non-empty |
+| `TxHash` | Non-empty |
+| `Network` | Non-empty and one of: `testnet`, `mainnet`, `futurenet` |
+| `Status` | One of: `active`, `saved`, `resumed`, `recovered`, `expired` |
+| `CreatedAt` | Non-zero |
+| `LastAccessAt` | Non-zero and not before `CreatedAt` |
+| `SchemaVersion` | ≤ current `SchemaVersion` constant |
+| `EnvelopeXdr` | Non-empty when `SimRequestJSON` is set |
+
+### `session save` — `--pin-endpoint`
+
+```sh
+glassbox session save --pin-endpoint https://rpc.example.com
+```
+
+Pins an RPC endpoint URL with the saved session so that when the session is resumed the same endpoint is displayed and can be used with `--rpc-url`.
+
+---
 
 - [`glassbox profile`](./debug-command.md#profile) — gas usage analysis and pprof flamegraph generation
 - [`glassbox doctor`](./sandboxed-replay.md) — environment setup checker
