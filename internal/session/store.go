@@ -623,3 +623,58 @@ func ValidateIntegrity(data *Data) *IntegrityReport {
 	report.OK = len(report.Issues) == 0
 	return report
 }
+
+// ── Store-level diagnostics ───────────────────────────────────────────────────
+
+// StoreDiagnosticsResult summarises the health of all persisted sessions.
+type StoreDiagnosticsResult struct {
+	// TotalSessions is the number of sessions examined.
+	TotalSessions int
+	// HealthySessions is the count with no integrity issues.
+	HealthySessions int
+	// DegradedSessions is the count with at least one integrity issue.
+	DegradedSessions int
+	// Reports contains the IntegrityReport for every degraded session.
+	Reports []*IntegrityReport
+}
+
+// RunStoreDiagnostics loads every session in the store and runs ValidateIntegrity
+// on each one. It is safe to call from a background goroutine.
+// If the store cannot be listed, an error is returned immediately.
+func (s *Store) RunStoreDiagnostics(ctx context.Context) (*StoreDiagnosticsResult, error) {
+	sessions, err := s.List(ctx, 0) // 0 → use default limit
+	if err != nil {
+		return nil, fmt.Errorf("failed to list sessions for diagnostics: %w\n"+
+			"  Run 'glassbox session list' to verify the session database is accessible.", err)
+	}
+
+	result := &StoreDiagnosticsResult{
+		TotalSessions: len(sessions),
+	}
+
+	for _, data := range sessions {
+		report := ValidateIntegrity(data)
+		if report.OK {
+			result.HealthySessions++
+		} else {
+			result.DegradedSessions++
+			result.Reports = append(result.Reports, report)
+		}
+	}
+
+	return result, nil
+}
+
+// Summary returns a human-readable one-liner for the diagnostics result.
+func (r *StoreDiagnosticsResult) Summary() string {
+	if r.TotalSessions == 0 {
+		return "Session store: no sessions found."
+	}
+	if r.DegradedSessions == 0 {
+		return fmt.Sprintf("Session store: %d session(s) — all healthy.", r.TotalSessions)
+	}
+	return fmt.Sprintf(
+		"Session store: %d session(s), %d healthy, %d degraded — run 'glassbox session list' for details.",
+		r.TotalSessions, r.HealthySessions, r.DegradedSessions,
+	)
+}
