@@ -105,6 +105,8 @@ cargo build --target wasm32-unknown-unknown --release
 
 See [docs/debug-symbols-guide.md](debug-symbols-guide.md) for more details.
 
+For Cargo manifests specifically, run `glassbox validate-cargo` to surface unsupported `lto` or `debug` values and receive actionable fixes before you build or replay a contract.
+
 ## Cross-repository source links
 
 When contract sources live in another Git repository, map local path prefixes to
