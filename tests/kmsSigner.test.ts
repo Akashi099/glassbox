@@ -364,7 +364,7 @@ describe('createAuditSigner – kms provider', () => {
 
   it('throws for an unknown provider string', () => {
     expect(() => createAuditSigner({ hsmProvider: 'vault' })).toThrow(
-      'unknown signing provider'
+      'unknown provider'
     );
   });
 });

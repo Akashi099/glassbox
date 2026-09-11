@@ -5,8 +5,6 @@ import { ProtocolRegistrar, ProtocolRegistrationError, formatRegistrationSummary
 import * as fs from 'fs/promises';
 import * as os from 'os';
 
-const mockExecAsync = jest.fn();
-
 jest.mock('fs/promises');
 jest.mock('os', () => ({
     ...jest.requireActual('os'),
@@ -16,14 +14,19 @@ jest.mock('os', () => ({
 jest.mock('child_process', () => ({
     exec: jest.fn(),
 }));
-jest.mock('util', () => ({
-    ...jest.requireActual('util'),
-    promisify: jest.fn(() => mockExecAsync),
-}));
+
+jest.mock('util', () => {
+    const _fn = jest.fn();
+    return {
+        ...jest.requireActual('util'),
+        promisify: jest.fn(() => _fn),
+    };
+});
+
+const mockExecAsync = (jest.requireMock('util') as any).promisify.mock.results[0].value as jest.Mock;
 
 describe('ProtocolRegistrar.validateRegistrationPrerequisites', () => {
     beforeEach(() => {
-        jest.resetAllMocks();
         mockExecAsync.mockReset();
         (os.platform as jest.Mock).mockReturnValue('linux');
         (os.homedir as jest.Mock).mockReturnValue('/home/user');
@@ -126,7 +129,6 @@ describe('ProtocolRegistrar.register', () => {
         (fs.access as jest.Mock).mockResolvedValue(undefined);
         mockExecAsync
             .mockResolvedValueOnce({ stdout: '/usr/bin/xdg-mime\n', stderr: '' })
-            .mockResolvedValueOnce(undefined)
             .mockRejectedValueOnce({ stderr: 'permission denied', stdout: '' });
 
         const registrar = new ProtocolRegistrar('/usr/local/bin/glassbox');

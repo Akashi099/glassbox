@@ -121,7 +121,8 @@ export class AuditLogger {
     // Validate payload before signing.
     assertValidAuditPayload(trace);
 
-    const canonicalString = canonicalizeJSON(trace);
+    const hashInput = { trace };
+    const canonicalString = canonicalizeJSON(hashInput);
     const traceHash = createHash('sha256').update(canonicalString).digest('hex');
 
     const signatures: SignatureEntry[] = [];

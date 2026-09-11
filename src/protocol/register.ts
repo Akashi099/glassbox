@@ -169,7 +169,10 @@ export class ProtocolRegistrar {
         try {
             await fs.access(this.cliPath);
         } catch (err) {
-            throw new Error(`Registration failed: CLI executable not found at '${this.cliPath}'.`);
+            throw new ProtocolRegistrationError(
+                `Registration failed: CLI executable not found at '${this.cliPath}'.`,
+                ['Ensure the glassbox binary is installed correctly.'],
+            );
         }
 
         try {
@@ -256,6 +259,9 @@ export class ProtocolRegistrar {
             console.log(` Protocol handler registered for ${this.protocol}://`);
         } catch (error: any) {
             console.error('Failed to register protocol handler:', error);
+            if (error instanceof ProtocolRegistrationError) {
+                throw error;
+            }
             throw new Error(`Protocol registration failed on ${platform}: ${error.message}`);
         }
     }

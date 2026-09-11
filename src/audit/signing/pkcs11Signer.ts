@@ -791,7 +791,7 @@ export class Pkcs11Signer implements AuditSigner {
 }
 
 function wrapSignError(stage: string, err: unknown, remediation: string): Error {
-  if (err instanceof Error && !isPkcs11Code(err)) {
+  if (err instanceof Error && typeof (err as Pkcs11ErrorLike).code !== "number") {
     return err;
   }
   return formatPkcs11Error(stage, err, remediation);
