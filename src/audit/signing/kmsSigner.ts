@@ -1,6 +1,7 @@
 // Copyright (c) 2026 dotandev
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
+import * as crypto from "crypto";
 import type { AuditSigner, PublicKey, Signature } from "./types";
 import {
   KmsContextCancelledError,
@@ -224,7 +225,7 @@ export class KmsSigner implements AuditSigner {
     // preserved across attempts" invariant.
     const { SignCommand } = this.loadKmsModule();
     const client = this.getClient();
-    const messageBuffer = Buffer.from(payload); // copy once, reused across retries.
+    const messageBuffer = Buffer.from(crypto.createHash('sha512').update(payload).digest()); // hash once, reused across retries.
     const buildInput = () => ({
       KeyId: this.keyId,
       Message: messageBuffer,

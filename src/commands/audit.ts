@@ -9,7 +9,7 @@ import stringify from "fast-json-stable-stringify";
 import { AuditLogger } from "../audit/AuditLogger";
 import { renderAuditHTML, writeAuditReport } from "../audit/AuditRenderer";
 import { createAuditSigner } from "../audit/signing/factory";
-import { verifyAuditLog } from "../audit/AuditVerifier";
+import { verifyAuditLog, type TrustPolicy, verifyAuditLogDetailed } from "../audit/AuditVerifier";
 import { ExitCode } from "../exit-codes";
 
 // Load env for key/provider configuration

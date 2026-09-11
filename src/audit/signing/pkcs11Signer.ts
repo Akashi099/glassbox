@@ -491,7 +491,8 @@ function isPkcs11Code(err: unknown, ...codes: number[]): boolean {
 function formatPkcs11Error(stage: string, err: unknown, remediation: string): Error {
   const code = (err as Pkcs11ErrorLike | undefined)?.code;
   const method = (err as Pkcs11ErrorLike | undefined)?.method;
-  const message = err instanceof Error ? err.message : String(err);
+  const rawMessage = (err as Pkcs11ErrorLike | undefined)?.message;
+  const message = typeof rawMessage === "string" ? rawMessage : (err instanceof Error ? err.message : String(err));
   const codeSuffix =
     typeof code === "number"
       ? ` (0x${code.toString(16).padStart(8, "0")})`
@@ -513,8 +514,8 @@ function sanitizePinError(err: unknown): Error {
   if (isPkcs11Code(err, CKR_PIN_INCORRECT)) {
     return formatPkcs11Error(
       "PKCS#11 login",
-      { code: CKR_PIN_INCORRECT, message: "PIN incorrect" } as any,
-      "Verify GLASSBOX_PKCS11_PIN is correct; repeated failures may lock the token.",
+      { code: (err as any).code, message: "Wrong PIN", method: (err as any).method } as any,
+      "Verify GLASSBOX_PKCS11_PIN and ensure the token is inserted and unlocked.",
     );
   }
   if (isPkcs11Code(err, CKR_PIN_LOCKED)) {

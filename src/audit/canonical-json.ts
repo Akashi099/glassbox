@@ -203,7 +203,7 @@ export function parseCanonicalInput(raw: string): unknown {
     // JSON.parse already merged duplicate keys (last wins) by this point, so we
     // cannot detect them here reliably for all engines.  Duplicate detection is
     // therefore done in the regex-based pre-pass below.
-    _ = key; _ = objectDepth; _ = depthStack; _ = seen;
+    void key; void objectDepth; void depthStack; void seen;
     if (typeof value === 'string') {
       return normalizeUnicodeString(value);
     }

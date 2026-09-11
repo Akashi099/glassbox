@@ -12,6 +12,8 @@ const execAsync = promisify(exec);
 
 const SUPPORTED_PLATFORMS = new Set(['win32', 'darwin', 'linux']);
 
+export type ProtocolRegistrationStatus = 'ok' | 'not_registered' | 'degraded' | 'unsupported';
+
 export interface ProtocolDiagnostics {
     platform: string;
     scheme: string;
@@ -84,6 +86,70 @@ export class ProtocolRegistrar {
         // Get the absolute path to the Glassbox CLI executable
         // In production, this would be the actual binary path
         this.cliPath = cliPath || process.execPath;
+    }
+
+    /**
+     * Validate prerequisites before touching OS registration state.
+     * Fails fast with actionable errors for unsupported platforms, missing
+     * binaries, non-executable paths, and missing Linux dependencies.
+     */
+    async validateRegistrationPrerequisites(): Promise<void> {
+        if (!this.cliPath) {
+            throw new ProtocolRegistrationError('Registration failed: CLI path is not defined.', []);
+        }
+
+        if (!path.isAbsolute(this.cliPath)) {
+            throw new ProtocolRegistrationError(`Registration failed: CLI path must be absolute, got '${this.cliPath}'.`, []);
+        }
+
+        try {
+            await fs.access(this.cliPath);
+        } catch {
+            throw new ProtocolRegistrationError(
+                `Executable not found at ${this.cliPath}`,
+                [
+                    'Ensure the glassbox binary is installed correctly and the path is not a broken symlink.',
+                    'Re-run registration from the installed binary rather than via a transient path.',
+                ],
+            );
+        }
+
+        const platform = os.platform();
+
+        if (!SUPPORTED_PLATFORMS.has(platform)) {
+            throw new ProtocolRegistrationError(
+                `Protocol registration is not supported on ${platform}`,
+                [
+                    'Protocol registration is only supported on Windows, macOS, and Linux.',
+                    'Use the native glassbox CLI (Go build) for platform registration on this OS.',
+                ],
+            );
+        }
+
+        if (platform === 'win32') {
+            const ext = path.extname(this.cliPath).toLowerCase();
+            if (ext !== '' && !['.exe', '.cmd', '.bat', '.com'].includes(ext)) {
+                throw new ProtocolRegistrationError(
+                    `Registered binary ${this.cliPath} does not look executable on Windows`,
+                    [
+                        'Ensure the registered file is a runnable .exe, .cmd, .bat, or .com binary.',
+                    ],
+                );
+            }
+        } else {
+            try {
+                await fs.access(this.cliPath, fsConstants.X_OK);
+            } catch {
+                throw new ProtocolRegistrationError(
+                    `Binary at ${this.cliPath} is not executable`,
+                    [`Restore execute permissions, for example: chmod +x ${this.cliPath}`],
+                );
+            }
+        }
+
+        if (platform === 'linux') {
+            await this.ensureLinuxDependencies();
+        }
     }
 
     /**
@@ -173,6 +239,19 @@ export class ProtocolRegistrar {
                 );
             }
         }
+
+        try {
+            switch (platform) {
+                case 'win32':
+                    await this.registerWindows();
+                    break;
+                case 'darwin':
+                    await this.registerMacOS();
+                    break;
+                case 'linux':
+                    await this.registerLinux();
+                    break;
+            }
 
             console.log(` Protocol handler registered for ${this.protocol}://`);
         } catch (error: any) {
@@ -324,7 +403,7 @@ Terminal=false`;
     async isRegistered(): Promise<boolean> {
         const platform = os.platform();
 
-        if (!SUPPORTED_PLATFORMS.includes(platform as typeof SUPPORTED_PLATFORMS[number])) {
+        if (!SUPPORTED_PLATFORMS.has(platform)) {
             return false;
         }
 
@@ -425,7 +504,7 @@ Terminal=false`;
             remediationSteps: [],
         };
 
-        if (!SUPPORTED_PLATFORMS.includes(platform as typeof SUPPORTED_PLATFORMS[number])) {
+        if (!SUPPORTED_PLATFORMS.has(platform)) {
             base.status = 'unsupported';
             base.issues.push(`Protocol registration is not supported on ${platform}`);
             base.remediationSteps.push('Use Linux, macOS, or Windows to register the glassbox:// handler');

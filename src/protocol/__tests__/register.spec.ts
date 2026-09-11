@@ -1,7 +1,7 @@
 // Copyright (c) 2026 dotandev
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-import { ProtocolRegistrar, ProtocolRegistrationError } from '../register';
+import { ProtocolRegistrar, ProtocolRegistrationError, formatRegistrationSummary } from '../register';
 import * as fs from 'fs/promises';
 import * as os from 'os';
 

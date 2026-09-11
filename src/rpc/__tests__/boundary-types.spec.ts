@@ -256,7 +256,7 @@ describe('normalizeSendTransactionResult', () => {
 describe('normalizeAxiosError', () => {
     let mock: MockAdapter;
 
-    beforeEach(() => { mock = new MockAdapter(axios); });
+    beforeEach(() => { mock = new MockAdapter(axios as any); });
     afterEach(() => { mock.restore(); });
 
     it('returns NetworkError for ECONNREFUSED', async () => {
