@@ -5,6 +5,8 @@ package eventbus
 
 import (
 	"sync"
+
+	"github.com/dotandev/glassbox/internal/logger"
 )
 
 // HandlerID uniquely identifies a registered event listener.
@@ -59,6 +61,8 @@ func (b *EventBus) Unsubscribe(topic string, id HandlerID) {
 		if len(listeners) == 0 {
 			delete(b.handlers, topic)
 		}
+	} else {
+		logger.Logger.Debug("EventBus: Unsubscribe called for unknown topic", "topic", topic)
 	}
 }
 

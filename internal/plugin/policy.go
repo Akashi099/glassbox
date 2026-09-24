@@ -64,21 +64,26 @@ func (p *Policy) CheckManifest(m *Manifest) error {
 		}
 	}
 
+	deniedCaps := make(map[string]bool, len(p.DeniedCapabilities))
+	for _, c := range p.DeniedCapabilities {
+		deniedCaps[c] = true
+	}
+	deniedPerms := make(map[string]bool, len(p.DeniedPermissions))
+	for _, pr := range p.DeniedPermissions {
+		deniedPerms[pr] = true
+	}
+
 	// Check denied capabilities.
-	for _, deniedCap := range p.DeniedCapabilities {
-		for _, cap := range m.Capabilities {
-			if string(cap) == deniedCap {
-				return fmt.Errorf("plugin %q declares capability %q which is denied by policy", m.Name, deniedCap)
-			}
+	for _, cap := range m.Capabilities {
+		if deniedCaps[string(cap)] {
+			return fmt.Errorf("plugin %q declares capability %q which is denied by policy", m.Name, string(cap))
 		}
 	}
 
 	// Check denied permissions.
-	for _, deniedPerm := range p.DeniedPermissions {
-		for _, perm := range m.Permissions {
-			if string(perm) == deniedPerm {
-				return fmt.Errorf("plugin %q requests permission %q which is denied by policy", m.Name, deniedPerm)
-			}
+	for _, perm := range m.Permissions {
+		if deniedPerms[string(perm)] {
+			return fmt.Errorf("plugin %q requests permission %q which is denied by policy", m.Name, string(perm))
 		}
 	}
 

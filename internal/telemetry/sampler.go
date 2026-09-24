@@ -36,7 +36,7 @@ func (s *Sampler) ShouldEmit() bool {
 	if s.rate <= 0.0 {
 		return false
 	}
-	return rand.Float64() < s.rate //nolint:gosec // non-cryptographic sampling
+	return rand.Float64() < s.rate //nolint:gosec // sampling does not require cryptographic randomness; math/rand statistical uniformity is sufficient
 }
 
 // Rate returns the configured sample rate.

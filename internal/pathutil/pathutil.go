@@ -115,7 +115,7 @@ func ValidateSourcePath(path string) error {
 	if strings.Contains(cleaned, "..") {
 		return &PathValidationError{
 			Path:    path,
-			Reason:  "path contains directory traversal (..)",
+			Reason:  "path resolves above its starting directory (contains .. after normalisation)",
 			FixHint: "use a relative path within the project or an absolute path without traversal",
 		}
 	}
