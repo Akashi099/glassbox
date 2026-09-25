@@ -77,7 +77,7 @@ func WrapStoreError(operation, dbPath string, err error) error {
 // RedactTxHash shortens a full transaction hash to its first 8 characters for
 // display in logs, reducing on-chain traceability in plaintext output.
 func RedactTxHash(txHash string) string {
-	if len(txHash) <= 8 {
+	if len(txHash) <= 11 {
 		return txHash
 	}
 	return txHash[:8] + "..."

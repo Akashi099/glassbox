@@ -14,6 +14,10 @@ import (
 	"github.com/dotandev/glassbox/internal/logger"
 )
 
+// DefaultWASMCacheTTL is the TTL applied when NewWASMCache is called with a
+// zero or negative ttl argument.
+const DefaultWASMCacheTTL = 72 * time.Hour
+
 // WASMEntry is one persisted cache record. It stores both the full CacheKey
 // (for later auditing / diagnostics) and the analysis output as raw bytes.
 type WASMEntry struct {
@@ -61,10 +65,11 @@ type WASMCache struct {
 }
 
 // NewWASMCache creates a WASMCache backed by manager with the given TTL.
+// A zero or negative ttl uses DefaultWASMCacheTTL (72 hours).
 // diag may be nil; if provided, all hits and misses are recorded.
 func NewWASMCache(manager *Manager, ttl time.Duration, diag *Diagnostics) *WASMCache {
 	if ttl <= 0 {
-		ttl = 72 * time.Hour
+		ttl = DefaultWASMCacheTTL
 	}
 	return &WASMCache{
 		manager: manager,

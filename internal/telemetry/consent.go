@@ -13,7 +13,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"time"
 )
@@ -186,5 +185,5 @@ func parseBoolLoose(s string) (bool, error) {
 	case "0", "false", "no", "off":
 		return false, nil
 	}
-	return strconv.ParseBool(s)
+	return false, fmt.Errorf("unrecognised boolean value %q", s)
 }

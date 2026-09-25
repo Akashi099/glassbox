@@ -90,6 +90,14 @@ func TestRedactTxHash_ShortHashUnchanged(t *testing.T) {
 	}
 }
 
+func TestRedactTxHash_NineCharHashUnchanged(t *testing.T) {
+	hash := "abc123456"
+	got := RedactTxHash(hash)
+	if got != hash {
+		t.Errorf("9-char hash should be unchanged, got: %q", got)
+	}
+}
+
 func TestWrapStoreError_SanitizesPath(t *testing.T) {
 	err := wrapTestErr("/home/alice/.Glassbox/sessions.db: disk full")
 	wrapped := WrapStoreError("save", "/home/alice/.Glassbox/sessions.db", err)

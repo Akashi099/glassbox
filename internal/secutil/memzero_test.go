@@ -15,11 +15,11 @@ func TestMemzero(t *testing.T) {
 	}
 }
 
-func TestMemzeroEmpty(t *testing.T) {
+func TestMemzero_EmptySlice(t *testing.T) {
 	Memzero([]byte{})
 }
 
-func TestMemzeroNil(t *testing.T) {
+func TestMemzero_NilSlice(t *testing.T) {
 	Memzero(nil)
 }
 
