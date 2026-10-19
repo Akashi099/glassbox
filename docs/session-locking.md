@@ -128,6 +128,107 @@ sessions via `glassbox session share` / `glassbox session import`.
 
 ---
 
+## Troubleshooting lock symptoms
+
+Closes #1172.
+
+### Symptom: `SESSION_LOCK_HELD` error on save
+
+```
+Error: SESSION_LOCK_HELD: session "abc123" is locked by another process
+Hint:  Another Glassbox instance is saving this session. Wait a moment and retry.
+       If the other process has crashed, the lock clears automatically after 5 minutes.
+```
+
+**Safe first step — inspect without touching the lock:**
+
+```bash
+glassbox session lock:status <session-id>
+```
+
+Sample output when the holder is still alive:
+
+```
+Session "abc123": locked
+  PID              : 18432
+  Hostname         : worker-01
+  Acquired at      : 2026-06-15T14:02:30Z
+  Glassbox version : 1.4.0
+  Status           : LIVE (process 18432 is running)
+```
+
+Sample output when the holder has crashed:
+
+```
+Session "abc123": locked
+  PID              : 18432
+  Hostname         : worker-01
+  Acquired at      : 2026-06-15T14:02:30Z
+  Glassbox version : 1.4.0
+  Status           : STALE (process 18432 is no longer running)
+
+Hint: run 'glassbox session recover' to remove the stale lock.
+```
+
+> **Warning:** do not manually delete a lock file in `~/.Glassbox/locks/` while
+> the holder PID shown by `lock:status` is still alive. Doing so will break the
+> advisory-lock protocol and can allow two writers to modify the session
+> simultaneously, risking data loss or silent corruption. Only proceed to
+> recovery steps when `lock:status` confirms `STALE`.
+
+---
+
+### Decision flow for a `SESSION_LOCK_HELD` error
+
+```
+SESSION_LOCK_HELD received
+        │
+        ▼
+glassbox session lock:status <id>
+        │
+        ├─ LIVE  ──► Wait for the other process to finish, then retry.
+        │             If it is stuck, stop that process normally first.
+        │
+        └─ STALE ──► glassbox session recover
+                      (removes stale lock and restores the session)
+```
+
+---
+
+### Symptom: `SESSION_WRITE_CONFLICT` error
+
+```
+Error: SESSION_WRITE_CONFLICT: session "abc123" write conflict: expected revision 2 but disk has revision 3
+Hint:  Run 'glassbox session resume abc123' to reload the latest version and re-apply
+       your changes, or re-run with --force to overwrite it.
+```
+
+Another process wrote a newer revision between your last load and this save.
+
+| Option | Command | Effect |
+|--------|---------|--------|
+| Reload and re-apply | `glassbox session resume <id>` | Read-only load of newest version |
+| Force-overwrite | `glassbox session save --force` | Discards the concurrent revision — destructive |
+
+Prefer `session resume` unless you have inspected the conflict and are certain
+the concurrent revision can be discarded.
+
+---
+
+### Symptom: stale lock found by `session doctor`
+
+```
+Removed 1 stale advisory lock file(s) from ~/.Glassbox/locks/
+```
+
+`session doctor` automatically removes locks whose owning PID is dead and whose
+age exceeds 5 minutes (`StaleLockAge`). No manual action is required.
+
+See [session recovery guidance](session-recovery-decision.md) for a full
+symptom-to-command reference.
+
+---
+
 ## Implementation reference
 
 | Symbol | File | Description |
