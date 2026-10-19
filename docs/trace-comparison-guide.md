@@ -280,6 +280,104 @@ Add additional fields to suppress in your configuration file:
 4. **Use Baselines from Stable Branches**: Compare against known-good baselines
 5. **Informational Mode for PRs**: Use `--info` in pull requests to avoid blocking on minor changes
 
+## Interpreting Differences
+
+Not every difference reported by `CompareTracesNormalized` is a regression.
+The examples below show one meaningful difference and one benign difference,
+drawn from the test fixtures in `internal/trace/normalized_compare_test.go`.
+
+### Meaningful difference — CPU regression
+
+**Setup:** The baseline trace has each step annotated with 100 CPU instructions
+(10 steps × 10 cpu/step = 1 000 total). The current trace has the same step
+count but 20% more CPU per step (1 200 total). This reproduces
+`TestCompareTracesNormalized_CPURegression`.
+
+```
+── CPU ──
+Path                     Baseline     Current   Abs Delta   % Delta   Severity
+────────────────────────────────────────────────────────────────────────────────
+total_cpu_instructions     1000         1200        200       20.0%    warning
+```
+
+**Why this is meaningful:** The delta (200 instructions, 20.0%) exceeds the
+default `cpu_threshold_pct` of 10.0%. That means the execution path genuinely
+consumed more resources — likely a new code branch was taken, an extra
+allocation occurred, or a host function was called more times. Investigate by
+running `glassbox trace filter` on both traces with `--event-type host_function`
+to see whether a particular host call accounts for the increase.
+
+Severity scales with how far above the threshold the delta is:
+
+- **warning** — delta ≥ threshold (10%) and < 2× threshold (20%)
+- **critical** — delta ≥ 2× threshold (≥ 20%); see
+  `TestCompareTracesNormalized_CriticalSeverity` (30% increase → critical)
+
+A regression with `HasRegression: true` only appears in the JSON output when at
+least one `critical` diff exists, or when `fail_on_threshold_violation` is
+`true` and any threshold is exceeded.
+
+### Benign difference — step count change from verbosity
+
+**Setup:** The baseline was captured with `--trace-verbosity verbose`
+(15 steps). The current run used `--trace-verbosity normal` (10 steps). This
+produces a diff in the `events` category.
+
+```
+── EVENTS ──
+Path           Baseline   Current   Abs Delta   % Delta   Severity
+───────────────────────────────────────────────────────────────────
+total_events      15         10         -5       -33.3%    info
+```
+
+**Why this is benign:** The severity is `info` because the step count
+*decreased* — `determineSeverity` only escalates to `warning` or `critical` for
+increases (`delta > 0`). The execution behavior is unchanged; fewer steps were
+emitted because the verbosity level was lowered. The guide does not classify
+every diff as a regression.
+
+Common benign patterns to recognise:
+
+| Diff | Likely cause | How to confirm |
+|---|---|---|
+| `total_events` changes, no CPU/memory change | Different `--trace-verbosity` between runs | Compare the verbosity flags used for each capture |
+| `call_path` added, severity `warning` | A new contract path appeared (may be intended) | Review the new path name; `warning` is used because the baseline had no data, not because cost increased |
+| `call_path` removed, severity `critical` | A previously-executed path is gone | Check whether the transaction logic changed or the baseline was captured from a different code version |
+| Small CPU/memory deltas filtered by absolute threshold | Normal JIT or scheduler noise | Delta below `cpu_absolute_threshold` (default 1 000 instructions) or `memory_absolute_threshold` (default 1 KB) is suppressed entirely |
+
+### When to use filters or canonicalization
+
+Use `--info` (informational mode) when:
+
+- Comparing traces from different verbosity levels — step counts will differ but
+  resource deltas are what matter.
+- Comparing across protocol versions — budget limits may change, so percentage
+  thresholds are more stable than absolute ones.
+
+Use the `suppressed_fields` configuration key when a field produces noise
+without carrying signal. The defaults (`timestamp`, `sequence_id`,
+`parent_sequence_id`, `wasm_instruction`) suppress fields whose values shift
+between runs for reasons unrelated to execution behavior. Add custom fields
+the same way:
+
+```json
+{
+  "suppressed_fields": [
+    "timestamp",
+    "sequence_id",
+    "parent_sequence_id",
+    "wasm_instruction",
+    "your_noisy_field"
+  ]
+}
+```
+
+Canonicalization through `--info` and `suppressed_fields` is appropriate when
+you want the comparison to focus on resource regressions and ignore structural
+metadata. It does not alter the underlying traces.
+
+---
+
 ## Troubleshooting
 
 ### No Differences Reported

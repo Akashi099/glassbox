@@ -53,6 +53,122 @@ glassbox trace filter tx.json --event-type host_function --exclude
 `--exclude` requires at least one other filter flag — `--exclude` alone
 would exclude every step, which is almost certainly a mistake.
 
+## Filter composition
+
+### How multiple filters combine
+
+All criteria on a single `FilterExpression` are **AND-combined**: every
+non-zero field must match for a step to be included. Omitting a field places no
+restriction on that dimension.
+
+This is verified by `TestFilter_CombinedFilters` in
+`internal/trace/filter_test.go`:
+
+```go
+// Three steps: (CA, fn1, error), (CA, fn2, ok), (CB, fn1, error)
+// Filter: ContractID="CA" AND Severity="error"
+// Result: 1 match — only (CA, fn1, error) passes both criteria.
+expr := &FilterExpression{ContractID: "CA", Severity: FilterSeverityError}
+```
+
+The same rule applies at the CLI: each flag you supply narrows the result
+further. There is no OR mode and no flag precedence — all flags are peers.
+
+### Two-filter example
+
+Suppose a 1 200-step trace contains calls across two contracts. You want only
+the steps in `CTOKEN` that also fall between source lines 40 and 80 of
+`token.rs`:
+
+```sh
+glassbox trace filter tx.json \
+  --contract CTOKEN \
+  --source-file token.rs \
+  --line-min 40 \
+  --line-max 80
+```
+
+Expected inclusion behavior, step by step:
+
+| Step | ContractID | SourceFile | SourceLine | Included? | Reason |
+|---|---|---|---|---|---|
+| 0 | `CTOKEN` | `token.rs` | 55 | **yes** | all three criteria match |
+| 1 | `CTOKEN` | `token.rs` | 12 | no | line 12 < `line-min` 40 |
+| 2 | `CTOKEN` | `other.rs` | 55 | no | `source-file` does not match |
+| 3 | `COTHER` | `token.rs` | 55 | no | `contract` does not match |
+| 4 | `CTOKEN` | `token.rs` | 0 | no | `SourceLine == 0` never matches a non-zero line range (no source info recorded) |
+
+This matches the behaviour verified by
+`TestFilter_SourceFileAndLineRange_Combined` in
+`internal/trace/filter_extended_test.go`.
+
+The `filter_summary` block in JSON output shows every active criterion so the
+result is self-describing:
+
+```json
+{
+  "filter_summary": {
+    "total_steps": 1200,
+    "matched_count": 3,
+    "match_ratio": 0.0025,
+    "active_filters": {
+      "contract_id": "CTOKEN",
+      "source_file": "token.rs",
+      "line_min": "40",
+      "line_max": "80"
+    },
+    "exclude_mode": false
+  }
+}
+```
+
+### Composing expressions programmatically with `And()`
+
+`FilterExpression.And(other)` merges two expressions into one. The rules
+(from `filter.go` and verified by `TestFilter_And_*`):
+
+- **Non-zero fields from `other` override the same field in `f`.** If both
+  expressions set `ContractID`, `other`'s value wins.
+- **Zero/empty fields in `other` leave `f`'s value unchanged.** Omitting a
+  field in `other` does not clear it in `f`.
+- **`Exclude: true` propagates.** If either expression has `Exclude` set, the
+  combined expression excludes matching steps.
+- **`And(nil)` is safe.** A nil receiver or nil argument is treated as an empty
+  expression.
+
+```go
+// Start with a line range from one source
+f1 := &FilterExpression{LineMin: 10}   // steps at line ≥ 10
+
+// Narrow with an upper bound from another source
+f2 := &FilterExpression{LineMax: 50}   // steps at line ≤ 50
+
+combined := f1.And(f2)
+// combined: LineMin=10, LineMax=50 — equivalent to --line-min 10 --line-max 50
+// Verified by TestFilter_And_CombinesLineRanges
+```
+
+Another example — adding exclude mode after the fact:
+
+```go
+base := &FilterExpression{ContractID: "CNOISE"}
+excl := &FilterExpression{Exclude: true}
+
+// Show everything except CNOISE
+result := base.And(excl)
+// Verified by TestFilter_And_ExcludePropagates
+```
+
+### What `And()` does not do
+
+- It does not OR criteria. There is no way to express "contract A or contract B"
+  with a single `FilterExpression`. Run two separate filter passes and merge the
+  results in your application if you need OR semantics.
+- It does not validate the result. Call `Validate()` on the combined expression
+  before passing it to `ApplyFilter`.
+
+---
+
 ## CLI usage
 
 ```

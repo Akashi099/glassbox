@@ -981,6 +981,81 @@ unsupported schema_version "99.0" in trace file "./old-trace.json"
 
 ---
 
+---
+
+## Export Failure Reference
+
+The table below maps each common export failure class to its verified cause and
+a safe corrective action. Every row is backed by the validation logic in
+`ValidateTraceExportParams`, `ValidateTraceFormatCompatibility`,
+`ValidateTraceInputs`, and `ExportWithResilience` (see `internal/trace/`).
+
+No remedy in this table overwrites existing data silently.
+`ExportWithResilience` uses an atomic write-rename by default, so the old file
+is left intact if the new write fails. When `BackupExisting` is enabled a
+`.bak.<timestamp>` copy is made before any overwrite.
+
+### Path and filesystem failures
+
+| Failure | Typical error message | Safe correction |
+|---|---|---|
+| Output path is a directory | `output path "…" looks like a directory path (ends with "/")` | Add a filename: `--export ./out/trace.html` instead of `--export ./out/` |
+| Parent directory does not exist | `failed to create trace export directory: …` | The directory is created automatically (`os.MkdirAll`). If this error appears, your process lacks write permission on the parent — choose a writable path or fix permissions. |
+| Parent directory is a file, not a directory | `output path parent "…" exists but is not a directory` | Remove the conflicting file or choose a different output path. |
+| Output path contains null bytes | `output path contains null bytes` | Remove null bytes from the path. This is a shell-injection guard; the path came from user input that should be sanitised before it reaches the CLI. |
+| Path traversal (`..`) detected | `contains directory traversal sequences (..)` | Use an absolute path or a relative path without `..` components, e.g. `./output/trace.html`. Detection uses `filepath.Clean` so double dots inside a filename (`my..trace.html`) are not flagged. |
+| Permission denied on parent directory | `output directory "…" is not accessible — permission denied` | Check that your user has read and execute permissions on the parent directory: `ls -ld <parent>`. |
+| Disk full during write | `failed to write trace export file: no space left on device` | Free disk space or choose a path on a filesystem with sufficient headroom. The atomic write path leaves no partial file behind. |
+| File write failure (non-disk-full) | `failed to write trace export file: …` | Check filesystem mount options (read-only mounts) and process file-descriptor limits. |
+
+### Format failures
+
+| Failure | Typical error message | Safe correction |
+|---|---|---|
+| Unknown format string | `invalid or unsupported --export-format "yaml"` | Use one of `html`, `markdown`, `json`, `text`. `md` is also accepted as an alias for `markdown`. |
+| Empty format string | `--export-format is empty` | Omit the flag (defaults to `html`) or set it explicitly. |
+| Trace too large for HTML | `trace has N steps — too large for HTML export` | Switch to `--format json` for large traces, or use `--trace-verbosity summary` to reduce step count before export. |
+| Trace too large for Markdown | `trace has N steps — markdown output will be extremely long` | Use `--format json` or filter the trace with `glassbox trace filter` first. |
+| Step detail too large for HTML | `trace step N has excessively large detail fields` | Use `--format json` for traces whose steps carry large argument or error payloads. |
+| Step index mismatch (JSON) | `trace step mismatch at position N: expected step N but got M` | Re-export or sanitize with `ExportWithResilience`, which repairs step indices automatically via `SanitizeTrace`. |
+| Markdown code-fence in error field | `trace step N error contains markdown code fence markers` | Usually safe to ignore — the export still succeeds. Review the raw step detail if the rendered markdown looks malformed. |
+
+### Trace data failures
+
+| Failure | Typical error message | Safe correction |
+|---|---|---|
+| Nil trace | `trace is nil — cannot export a nil trace` | Verify the trace was loaded or deserialized correctly before calling export. Check for earlier load errors. |
+| Empty trace (no steps) | `trace has no execution states` | Confirm the traced transaction actually executed contract code. Run `glassbox doctor` to check simulator compatibility. |
+| Missing transaction hash | `trace has no transaction hash` | The trace was constructed without a hash. Re-run the debug or trace command against a valid transaction. |
+| Zero start or end time | `trace start time is zero` / `trace end time is zero` | The trace was not properly initialized. Re-capture with the current CLI version. |
+| End time before start time | `trace end time is before start time` | Timestamps were corrupted after capture. Re-export from the raw simulator output. |
+| Non-monotonic step timestamps | `[accuracy] step N: timestamp … is before previous step timestamp` | This is a hard accuracy warning (not a fatal error). Re-capture the trace; timestamps come from the simulator clock, so a clock skew in the simulator produced the anomaly. |
+| Step index integrity | `[accuracy] step N: index mismatch (state.Step=M)` | Use `ExportWithResilience` — `SanitizeTrace` renumbers steps to match their slice position before writing. |
+| Unsupported JSON schema version | `schema_version "99.0" is not supported` | Re-export with the current CLI (`glassbox trace --output-json <file> <trace>`). Supported versions are listed in `SupportedJSONSchemaVersions`. |
+| Legacy trace file (no schema envelope) | `Warning: loaded legacy trace format (no version info)` | Re-export to get a versioned envelope. The trace is still usable but lacks schema stability guarantees. |
+
+### Export options failures
+
+| Failure | Typical error message | Safe correction |
+|---|---|---|
+| Too many comments | `too many comments (N) — maximum is 100` | Reduce the comment count or split the review across multiple exports. The limit applies to free-form comments and reviewer comments combined. |
+| Comment too long | `comment #N exceeds maximum length of 10000 characters` | Shorten the comment or split it. |
+| Empty comment | `--comment index N is empty or whitespace-only` | Remove the empty `--comment` flag or provide non-empty text. |
+| Invalid session metadata key | `session metadata key is empty or whitespace-only` | All `--meta key=value` pairs must have a non-empty key. |
+| Invalid reviewer comment | `reviewer comment #N is invalid: …` | Fix the named field (see the error detail). Common causes: unknown severity value, `updated_at` before `created_at`, empty author or body. |
+
+### Integrity verification failures (VerifyExport)
+
+| Failure | Typical error message | Safe correction |
+|---|---|---|
+| Metadata file missing | `metadata file not found: trace.json.meta.json` | The export was not produced with `ExportWithResilience` (metadata disabled). The trace file is still usable but cannot be integrity-checked. Re-export with resilience options to get a verifiable artifact. |
+| Checksum mismatch | `checksum mismatch — Expected: … Actual: …` | The trace file was modified after export. Re-export from the original source. **Do not use a checksum-mismatched file as an authoritative artifact.** |
+| Step count mismatch | `step count mismatch — Metadata records N steps, trace file contains M` | The file was truncated, appended to, or partially overwritten. Re-export. The old file is left in place by `ExportWithResilience`'s atomic write, so the intact version may still exist at `<path>.bak.<timestamp>` if `BackupExisting` was enabled. |
+| Unsupported schema version in metadata | `metadata file records unsupported schema_version "99.0"` | Upgrade the Glassbox CLI to a version that supports the recorded schema, or re-export with the current CLI. |
+| Format/extension mismatch | `format mismatch: metadata says "json" but file extension is ".html"` | Rename the file to match its declared format, or re-export. |
+
+---
+
 ## See Also
 
 - [Debug Command Reference](./debug-command.md)
