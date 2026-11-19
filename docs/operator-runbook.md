@@ -101,16 +101,40 @@ glassbox debug --show-metrics --network testnet <tx-hash>
    ```
 2. **Use a closer endpoint** — if on a different continent, try a regional
    endpoint.
-3. **Increase timeout** — set `request_timeout` in `glassbox.toml`:
+3. **Increase timeout** — set `request_timeout` in `glassbox.toml` (top-level,
+   not under `[rpc]`):
    ```toml
-   [rpc]
    request_timeout = 30  # seconds (default: 15)
+   ```
+   Or set the environment variable:
+   ```sh
+   export GLASSBOX_REQUEST_TIMEOUT=30
    ```
 4. **Check for slow calls** — `--show-metrics` highlights calls > 3 seconds
    with a remediation tip.
 
 **When to escalate:** If latency exceeds 5 seconds consistently, file an issue
 with the `--show-metrics` JSON output attached.
+
+**Verification:**
+
+```sh
+# Check current timeout configuration
+glassbox config show --json | jq '.request_timeout'
+
+# Test RPC latency manually
+time curl -s -X POST https://soroban-testnet.stellar.org \
+  -H "Content-Type: application/json" \
+  -d '{"jsonrpc":"2.0","id":1,"method":"getHealth"}'
+
+# Run debug with metrics to see RPC performance
+glassbox debug --show-metrics --network testnet <tx-hash>
+```
+
+**Test coverage:**
+- `internal/rpc/client_test.go` — `TestWithRequestTimeout_*` tests verify timeout configuration
+- `internal/rpc/failure_cause_test.go` — `TestClassifyFailureCause_*` tests verify timeout error classification
+- `internal/config/config_test.go` — `TestDefaultConfig_RequestTimeout`, `TestLoad_RequestTimeout*` tests verify config parsing
 
 ---
 

@@ -245,16 +245,16 @@ error object instead of the command-specific payload. The outer envelope fields
 
 | Code | Exit | Trigger |
 |---|---|---|
-| `TRANSACTION_NOT_FOUND` | 2 | Hash does not exist on the selected network |
+| `TRANSACTION_NOT_FOUND` | 1 | Hash does not exist on the selected network |
 | `INVALID_ARGUMENT` | 2 | Bad flag or argument value |
+| `VALIDATION_FAILED` | 2 | Bad flag, argument, or config value |
+| `CONFIG_ERROR` | 3 | Config file unreadable or invalid |
 | `RPC_CONNECTION_FAILED` | 4 | Network endpoint unreachable |
 | `RPC_TIMEOUT` | 4 | Request timed out |
 | `ALL_RPC_FAILED` | 4 | All failover endpoints failed |
 | `SIMULATION_FAILED` | 3 | Simulator process returned non-zero |
 | `SIMULATOR_NOT_FOUND` | 3 | `glassbox-sim` binary missing or not executable |
 | `SOURCE_DISCOVERY_FAILED` | 3 | Source mapping unavailable (use `--skip-source-mapping`) |
-| `SESSION_WRITE_CONFLICT` | 2 | Concurrent writer conflict — reload and retry |
-| `SESSION_LOCK_HELD` | 2 | Advisory lock held by a live process |
 
 Full catalogue: `docs/stable-error-codes.md`.
 
@@ -266,10 +266,13 @@ Exit codes are stable across releases. Do not key on error message text.
 
 | Code | Name | When |
 |---|---|---|
-| 0 | SUCCESS | Command completed without error |
-| 1 | USER_ERROR | Bad input, validation failure, not-found |
-| 2 | CONFIG_ERROR | Configuration or environment error |
-| 3 | RUNTIME_ERROR | Internal or network runtime error |
+| 0 | SUCCESS | Command completed successfully |
+| 1 | UNKNOWN_ERROR | Unexpected or unclassified runtime error |
+| 2 | VALIDATION_ERROR | Invalid user input: bad arguments, malformed payload, wrong format |
+| 3 | CONFIGURATION_ERROR | Configuration or provider error: missing key, unsupported platform, registration failure |
+| 4 | NETWORK_ERROR | Network or RPC error: connection refused, timeout, endpoint unavailable |
+| 5 | SECURITY_ERROR | Security or authorization error: invalid signature, unauthorized origin, rate limit exceeded |
+| 6 | RESOURCE_ERROR | Resource or concurrency error: lock acquisition failed, resource busy |
 | 130 | SIGINT | Process received Ctrl-C |
 | 143 | SIGTERM | Process received SIGTERM |
 
@@ -277,8 +280,8 @@ Exit codes are stable across releases. Do not key on error message text.
 glassbox debug --json <txhash>
 case $? in
   0) jq '.data' payload.json ;;
-  1) echo "Bad input or transaction not found" ;;
-  3) echo "Runtime error — check .data.error.code" ;;
+  2) echo "Validation error — check input" ;;
+  4) echo "Network error — check .data.error.code" ;;
   *) echo "Unexpected exit $?" ;;
 esac
 ```
@@ -487,9 +490,16 @@ echo "Status: $STATUS  Steps: $STEPS"
 ## Validating examples against fixtures
 
 The examples in this document derive from the conformance test fixtures in
-`test/regression/fixtures/`. To verify them locally:
+`test/regression/fixtures/` and unit tests in `internal/clioutput/` and
+`internal/cmd/`. To verify them locally:
 
 ```bash
+# Validate the envelope implementation
+go test ./internal/clioutput/...
+
+# Validate per-command JSON envelope tests
+go test ./internal/cmd/... -run JSON
+
 # Validate the trace fixture against the trace schema
 go test -run TestTraceSchemaValidation ./internal/trace/...
 
@@ -500,6 +510,14 @@ scripts/api-snapshot.sh check
 scripts/api-snapshot.sh generate
 go test ./internal/apicompat/... -update
 ```
+
+Key test files:
+- `internal/clioutput/output_test.go` — Envelope structure and WantsJSON logic
+- `internal/cmd/generate_bindings_json_test.go` — generate-bindings envelope
+- `internal/cmd/protocol_diagnose_json_test.go` — protocol:diagnose envelope
+- `internal/cmd/bench_test.go` — bench JSON output (non-envelope)
+- `internal/cmd/config_show_test.go` — config show JSON output (non-envelope)
+- `internal/cmd/check_bindings_test.go` — check-bindings JSON output (non-envelope)
 
 CI runs both checks on every PR via the `ci-gate` job.
 

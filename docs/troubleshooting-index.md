@@ -28,7 +28,7 @@ wrong but not *which document* explains how to fix it.
 | Symptom | What you might see | See |
 |---|---|---|
 | RPC connection failed | `RPC connection failed: dial tcp ...`; all failover endpoints report the same error | [Operator Runbook — RPC connection failures](./operator-runbook.md#rpc-connection-failures) |
-| RPC timeout | Debug run hangs then fails with timeout; `--show-metrics` shows high `rpc_avg_ms` | [Operator Runbook — RPC timeouts](./operator-runbook.md#rpc-timeouts) |
+| RPC timeout | Debug run hangs then fails with timeout; `--show-metrics` shows high `rpc_avg_ms`; `request_timeout` config too low | [Operator Runbook — RPC timeouts](./operator-runbook.md#rpc-timeouts) |
 | Transaction not found | `transaction not found` after successful RPC connection | [Operator Runbook — Transaction not found](./operator-runbook.md#transaction-not-found) |
 | Rate limit exceeded | `rate limit exceeded` from RPC; multiple rapid requests fail | [Operator Runbook — Rate limiting](./operator-runbook.md#rate-limiting) |
 | Unauthorized / invalid auth token | `unauthorized` or `missing/invalid auth token` | [Operator Runbook — Authentication errors](./operator-runbook.md#authentication-errors) |
