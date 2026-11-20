@@ -116,7 +116,7 @@ func TestByteStableGeneration(t *testing.T) {
 	spec := &abi.ContractSpec{
 		Functions: []xdr.ScSpecFunctionV0{
 			{
-				Name: xdr.ScSymbol("transfer"),
+				Name: "transfer",
 				Inputs: []xdr.ScSpecFunctionInputV0{
 					{Name: "from", Type: xdr.ScSpecTypeDef{Type: xdr.ScSpecTypeScSpecTypeAddress}},
 					{Name: "to", Type: xdr.ScSpecTypeDef{Type: xdr.ScSpecTypeScSpecTypeAddress}},
@@ -194,6 +194,64 @@ func TestByteStableGeneration(t *testing.T) {
 		if firstGeneration[i].Content != secondGeneration[i].Content {
 			t.Errorf("file content mismatch for %s: generations are not byte-stable", firstGeneration[i].Path)
 		}
+	}
+}
+
+func TestByteStableGeneration_DriftOnSpecChange(t *testing.T) {
+	fixedTime := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
+
+	spec1 := &abi.ContractSpec{
+		Structs: []xdr.ScSpecUdtStructV0{
+			{
+				Name: "Account",
+				Fields: []xdr.ScSpecUdtStructFieldV0{
+					{Name: "address", Type: xdr.ScSpecTypeDef{Type: xdr.ScSpecTypeScSpecTypeAddress}},
+				},
+			},
+		},
+	}
+
+	spec2 := &abi.ContractSpec{
+		Structs: []xdr.ScSpecUdtStructV0{
+			{
+				Name: "Account",
+				Fields: []xdr.ScSpecUdtStructFieldV0{
+					{Name: "address", Type: xdr.ScSpecTypeDef{Type: xdr.ScSpecTypeScSpecTypeAddress}},
+					{Name: "balance", Type: xdr.ScSpecTypeDef{Type: xdr.ScSpecTypeScSpecTypeI128}},
+				},
+			},
+		},
+	}
+
+	gen1 := &Generator{
+		config: GeneratorConfig{
+			PackageName:         "test-contract",
+			ContractID:          "TEST_CONTRACT_ID",
+			Network:             "testnet",
+			RuntimeTarget:       RuntimeNode,
+			fixedGenerationTime: fixedTime,
+		},
+		spec: spec1,
+	}
+	gen1.sortSpec()
+
+	gen2 := &Generator{
+		config: GeneratorConfig{
+			PackageName:         "test-contract",
+			ContractID:          "TEST_CONTRACT_ID",
+			Network:             "testnet",
+			RuntimeTarget:       RuntimeNode,
+			fixedGenerationTime: fixedTime,
+		},
+		spec: spec2,
+	}
+	gen2.sortSpec()
+
+	types1 := normalizeLineEndings(gen1.generateTypes())
+	types2 := normalizeLineEndings(gen2.generateTypes())
+
+	if types1 == types2 {
+		t.Fatal("expected types.ts to differ when contract spec changes (drift detection)")
 	}
 }
 

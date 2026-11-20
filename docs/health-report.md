@@ -164,3 +164,16 @@ To **block** on stale suppressions (recommended):
   run: scripts/health-report.sh
   # Exits 1 only when a suppression has passed its expiry date.
 ```
+
+---
+
+## Diagnostics Bundle vs. Health Report
+
+Glassbox provides two distinct diagnostic surfaces designed for different stages of the development and operational lifecycle:
+
+| Surface | Tool / Command | Primary Purpose | Scope & Outputs |
+|---------|----------------|-----------------|-----------------|
+| **Repository Health Report** | `scripts/health-report.sh` | Continuous repository code hygiene | Scans repository sources for stale `TODO` / `FIXME` comments, expired suppressions, unreferenced docs, and generated file drift. Produces a local text/JSON report. |
+| **Diagnostics Bundle** | `glassbox doctor --bundle` | Host environment and runtime diagnostics | Packages sanitized system metadata, toolchain versions (Go, Rust, Simulator), platform state, and redacted configuration into a portable `.gbdiag` archive for offline troubleshooting. |
+
+For complete documentation on collecting and sharing redacted environment diagnostics archives, see [Diagnostics Bundle (`doctor --bundle`)](diagnostics-bundle.md) and [Audit Bundle Contents](audit-bundle-contents.md).

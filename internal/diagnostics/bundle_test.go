@@ -7,6 +7,7 @@ import (
 	"archive/zip"
 	"context"
 	"encoding/json"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -131,11 +132,10 @@ func TestGenerateBundle_NoSecrets(t *testing.T) {
 	for _, f := range zr.File {
 		rc, err := f.Open()
 		require.NoError(t, err)
-		var buf strings.Builder
-		_, _ = buf.ReadFrom(rc)
+		raw, _ := io.ReadAll(rc)
 		rc.Close()
 
-		content := buf.String()
+		content := string(raw)
 		assert.NotContains(t, content, "supersecrettoken123", "file %s must not contain raw token", f.Name)
 		assert.NotContains(t, content, "sentry.io/123", "file %s must not contain raw Sentry DSN", f.Name)
 	}

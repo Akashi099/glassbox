@@ -85,3 +85,11 @@ Exit code 0 means the committed files are up-to-date; exit code 1 means
 drift was detected.
 
 The CI pipeline runs this check on every pull request.
+
+---
+
+## Related Documentation
+
+- [`docs/bindings-environments.md`](../../docs/bindings-environments.md) — Comprehensive comparison of Node.js, Browser, and Universal runtimes, bundler configurations, and error diagnosis
+- [`docs/binding-validation.md`](../../docs/binding-validation.md) — ABI metadata validation, staleness checks, and `--byte-verify` deterministic output testing
+- [`docs/runtime-binding-validation.md`](../../docs/runtime-binding-validation.md) — Pre-execution runtime validators for external payloads

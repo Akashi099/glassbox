@@ -158,6 +158,113 @@ glassbox check-bindings --spec-file abi.json --output ./src/generated --json
 
 ---
 
+## Byte-Stable Binding Output Verification (`--byte-verify`)
+
+While metadata header validation checks the embedded `abi-hash` comment, **byte-level verification** ensures that generated TypeScript bindings are 100% deterministic, reproducible, and byte-stable across repeated generation runs, environments, and operating systems when the contract ABI has not changed.
+
+This check detects subtle regressions that metadata hash comparison cannot catch alone:
+- Method, struct, or enum declaration ordering changes
+- Formatting, spacing, or indentation differences
+- Platform line-ending discrepancies (CRLF vs. LF)
+- File layout or export drift
+
+### How `--byte-verify` Works
+
+When `glassbox check-bindings` is run with `--byte-verify`:
+1. It loads the source ABI from the specified WASM binary (`<wasm-file>`) or external spec file (`--spec-file <path>`).
+2. It generates a fresh set of bindings into an isolated, temporary scratch directory (`glassbox-bindings-verify-*`).
+3. It performs a file-by-file, byte-for-byte comparison between the freshly generated files and the files in the target output directory (`--output`).
+4. The verification checks all 7 canonical generated files:
+   - `types.ts` — TypeScript type definitions for contract types, structs, enums, unions, and error enums
+   - `metadata.ts` — Contract specification constants and method parameter descriptors
+   - `client.ts` — Strongly-typed client class implementing contract invocation and simulation
+   - `Glassbox-integration.ts` — Simulator bridge supporting local CLI execution or HTTP simulation
+   - `index.ts` — Barrel module re-exporting client, types, and integration helpers
+   - `package.json` — NPM package configuration with environment-specific export mappings
+   - `README.md` — Usage documentation with code examples tailored to the target runtime
+
+### Timestamp Normalization vs. Strict Mode
+
+- **Default Mode (`--byte-verify`)**:
+  Metadata headers contain a wall-clock timestamp (`generated:   2026-05-30T12:00:00Z`). In default byte verification, these timestamp strings are normalized to `generated:   <TIMESTAMP>` prior to byte comparison. This prevents false positives when verifying committed files that were generated at an earlier time.
+- **Strict Mode (`--byte-verify --strict`)**:
+  Requires exact byte matching without normalization. When `--strict` is enabled, generation timestamps are pinned to a deterministic fixed time (`2024-01-01T00:00:00Z`). Use strict mode when verifying against golden fixtures or reproducible build environments.
+
+### Usage Examples
+
+```bash
+# Verify byte-stability against a contract WASM binary
+glassbox check-bindings contract.wasm --output ./src/generated --byte-verify
+
+# Verify byte-stability against a JSON ABI spec file
+glassbox check-bindings --spec-file contract-abi.json --output ./src/generated --byte-verify
+
+# Run byte verification in strict mode (exact byte match including pinned timestamp)
+glassbox check-bindings contract.wasm --output ./src/generated --byte-verify --strict
+```
+
+### Verification Output
+
+#### Success Path
+
+When all files are byte-identical, the command reports `OK` for each file and exits with code `0`:
+
+```
+Running byte-level verification for: ./src/generated
+
+  OK       types.ts
+  OK       metadata.ts
+  OK       client.ts
+  OK       Glassbox-integration.ts
+  OK       index.ts
+  OK       package.json
+  OK       README.md
+
+[OK] All bindings are byte-stable.
+```
+
+#### Failure / Drift Path
+
+When any file differs, the command flags `DRIFT`, identifies the exact character position of the first difference, and exits with code `1`:
+
+```
+Running byte-level verification for: ./src/generated
+
+  OK       types.ts
+  DRIFT    metadata.ts
+           First difference: at position 142: original="\"network\": \"testnet\"", generated="\"network\": \"mainnet\""
+  OK       client.ts
+  OK       Glassbox-integration.ts
+  OK       index.ts
+  OK       package.json
+  OK       README.md
+
+[DRIFT] Byte-level verification failed.
+Fix: Regenerate with: glassbox generate-bindings --output ./src/generated contract.wasm
+```
+
+### Make Target & CI Integration
+
+The repository provides a dedicated Make target and CI job for byte-stable binding verification:
+
+```bash
+# Verify using the Makefile target
+make check-bindings-byte-stable CHECK_BINDINGS_WASM_FILE=contract.wasm
+
+# Or with a spec file and custom bindings directory
+make check-bindings-byte-stable CHECK_BINDINGS_SPEC_FILE=contract-abi.json BINDINGS_DIR=./src/generated
+```
+
+In addition, schema bindings drift in the repository itself is verified via:
+
+```bash
+bash scripts/check-bindings-drift.sh
+```
+
+In GitHub Actions, the `bindings-byte-stable` CI workflow runs on pull requests to ensure committed bindings remain byte-stable across environments.
+
+---
+
 ## Auto-Regenerating Stale Bindings
 
 Pass `--regenerate` to automatically regenerate any stale or missing files:

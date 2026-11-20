@@ -1,15 +1,17 @@
 # Audit Bundle Contents
 
-Glassbox writes two portable artifacts that are handed to reviewers and
-auditors:
+Glassbox writes portable diagnostics and audit artifacts that are handed to reviewers,
+maintainers, and auditors:
 
 | Artifact | Command | Format | Source |
 |----------|---------|--------|--------|
 | Debug bundle | `glassbox debug bundle create <tx-hash>` | Single JSON file, `glassbox-bundle-<first 12 chars of tx hash>.json` by default | `internal/bundle/bundle.go` |
 | Session archive | `glassbox session share` | ZIP archive, `.gbx` (`.zip` also accepted) | `internal/session/archive.go` |
+| Diagnostics bundle | `glassbox doctor --bundle` | ZIP archive, `glassbox-diag-*.gbdiag` (`.zip` also accepted) | `internal/diagnostics/bundle.go` |
 
-Neither artifact is signed. Integrity comes from the per-member checksums
-(debug bundle) or from session validation on import (session archive). Signed
+None of these artifacts contain unredacted secrets when generated via safe paths.
+Integrity comes from per-member checksums (debug bundle), session validation on
+import (session archive), or embedded redaction policies (diagnostics bundle). Signed
 audit logs are documented separately in [audit-signing.md](audit-signing.md).
 
 ## Debug bundle (`format_version: 1`)
@@ -121,12 +123,164 @@ cannot parse the session record can still read them.
 
 ### Redaction
 
-The session is checked with `ValidateIntegrity` before export, and an
-invalid session is rejected. No fields are redacted, so `session.json`
-contains everything stored in the session. Review it before you share the
-archive outside the team.
+Session sharing supports configurable redaction profiles using `--redact <profile>`:
 
-Tests: `internal/session/archive_test.go`.
+| Profile | Flag | Behavior |
+|---------|------|----------|
+| `full` | `--redact full` (default) | Unredacted session export. Retains original parameters and environment configuration for internal trusted debugging. |
+| `balanced` | `--redact balanced` | Redacts environment credentials, auth headers, and RPC tokens while preserving execution footprints and event traces. |
+| `strict` | `--redact strict` | Strips contract argument values, storage keys, environment metadata, and raw transaction payloads. |
+
+To preview what fields would be redacted without writing an archive to disk, use `--preview`:
+
+```bash
+glassbox session share <session-id> --redact strict --preview
+```
+
+Tests: `internal/session/archive_test.go` and `internal/cmd/share_session_redact_test.go`.
+
+---
+
+## Diagnostics bundle (`doctor --bundle`)
+
+A portable ZIP archive containing system diagnostics, dependency status, redacted configuration, and platform metadata. For in-depth schema documentation, see [diagnostics-bundle.md](diagnostics-bundle.md).
+
+### Archive Layout
+
+```
+glassbox-diag-YYYYMMDD-HHMMSS.gbdiag   (ZIP)
+├── manifest.json    ← machine-readable diagnostics (schema v1)
+└── README.txt       ← human-readable summary and privacy guarantee
+```
+
+### Redaction Guarantees & Clean Examples
+
+Diagnostic bundles apply strict redaction rules before any data is serialized into `manifest.json`.
+
+#### Redaction Rules
+
+1. **Authentication Tokens & Passwords**: Any field named or matching `rpc_token`, `GLASSBOX_RPC_TOKEN`, `api_key`, `password`, or generic auth headers is replaced with `"[REDACTED]"`.
+2. **Private Keys & Secrets**: Ed25519 64-hex private keys and Stellar `S`-prefixed secret keys (56 characters) are replaced with `"[REDACTED]"`.
+3. **Crash Reporting Endpoints**: Sentry DSNs (`crash_sentry_dsn`) and custom crash endpoints (`crash_endpoint`) are replaced with `"[REDACTED]"`.
+4. **Filesystem Paths**: User home directory prefixes (e.g. `/home/developer` or `/Users/developer`) are masked to `~` (e.g. `~/.glassbox/cache`).
+5. **RPC URLs with Query Tokens**: Any query string in `rpc_url` containing credentials is truncated from `?` onwards as `?[REDACTED]`.
+6. **Hostnames**: Fully-qualified domain names are truncated to only the first DNS label (e.g. `workstation.corp.example.com` becomes `workstation`).
+
+#### Clean Redaction Example (Before and After)
+
+##### Raw Environment & Configuration (Before Redaction)
+
+```env
+# System environment and local configuration
+GLASSBOX_RPC_TOKEN="srb_tok_live_77a9c3d4e8f1"
+GLASSBOX_SENTRY_DSN="https://a1b2c3d4e5f6@sentry.example.internal/99"
+RPC_URL="https://soroban-testnet.stellar.org:443/rpc?auth=priv_9876543210"
+CACHE_PATH="/Users/alice/.glassbox/cache"
+HOSTNAME="alice-mbp.corp.network.internal"
+SIMULATOR_PATH="/Users/alice/.glassbox/cache/glassbox-sim"
+```
+
+##### Redacted `manifest.json` Inside Bundle (After Redaction)
+
+```json
+{
+  "schema_version": 1,
+  "meta": {
+    "glassbox_version": "1.2.3",
+    "commit_sha": "d7da2ca",
+    "build_date": "2026-11-20T18:00:00Z",
+    "go_version": "go1.26"
+  },
+  "platform": {
+    "os": "darwin",
+    "arch": "arm64",
+    "num_cpu": 8,
+    "go_os": "darwin",
+    "go_arch": "arm64",
+    "hostname": "alice-mbp",
+    "protocol_registration_state": "registered"
+  },
+  "config": {
+    "network": "testnet",
+    "log_level": "info",
+    "request_timeout": 15,
+    "max_trace_depth": 50,
+    "failure_threshold": 5,
+    "retry_timeout": 60,
+    "failover_strategy": "",
+    "telemetry": false,
+    "crash_reporting": false,
+    "cache_path": "~/.glassbox/cache",
+    "rpc_url": "https://soroban-testnet.stellar.org:443/rpc?[REDACTED]",
+    "rpc_token": "[REDACTED]",
+    "crash_sentry_dsn": "[REDACTED]",
+    "crash_endpoint": "[REDACTED]"
+  },
+  "checks": [
+    {
+      "id": "go",
+      "name": "Go",
+      "ok": true,
+      "version": "go1.26.0",
+      "path": "/usr/local/go/bin/go"
+    },
+    {
+      "id": "simulator",
+      "name": "Simulator Binary (glassbox-sim)",
+      "ok": true,
+      "version": "0.1.0",
+      "path": "~/.glassbox/cache/glassbox-sim"
+    }
+  ],
+  "policy": {
+    "collector_version": "1.0.0",
+    "verbose_mode": false,
+    "inventory": [
+      {
+        "name": "meta.glassbox_version",
+        "classification": "safe",
+        "description": "binary version string"
+      },
+      {
+        "name": "platform.hostname",
+        "classification": "masked",
+        "description": "first hostname label only (domain stripped)"
+      },
+      {
+        "name": "config.rpc_url",
+        "classification": "masked",
+        "description": "RPC URL; query string redacted"
+      },
+      {
+        "name": "config.rpc_token",
+        "classification": "redacted",
+        "description": "always replaced with [REDACTED]"
+      },
+      {
+        "name": "config.cache_path",
+        "classification": "masked",
+        "description": "home dir replaced with ~"
+      }
+    ]
+  },
+  "generated_at": "2026-11-20T18:45:00Z"
+}
+```
+
+#### CI Artifact Redaction (`scripts/redact-logs.sh`)
+
+In addition to runtime bundle redaction, CI upload pipelines run `scripts/redact-logs.sh` to scrub artifact directories before upload. It applies in-place regex substitutions covering 11 secret patterns (Bearer headers, GitHub PATs, generic API keys, PEM blocks, AWS credentials, PKCS#11 PINs, and RPC tokens) and enforces an upload size ceiling (`ARTIFACT_MAX_MB`):
+
+```bash
+# Redact staging directory before CI upload (aborts with exit 1 if > 50 MB)
+./scripts/redact-logs.sh ./staging-artifacts 50
+```
+
+| Exit Code | Meaning |
+|-----------|---------|
+| `0` | All files redacted successfully; directory size within limit |
+| `1` | Directory size exceeded `max-size-mb`; upload aborted |
+| `2` | Missing or non-existent staging directory argument |
 
 ## Reproducing the layout
 

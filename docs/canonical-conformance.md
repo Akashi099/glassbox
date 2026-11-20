@@ -153,3 +153,4 @@ Both implementations produce byte-identical output for all corpus cases.
 - [Audit Canonicalization](audit-canonicalization.md) — canonicalization design and rationale
 - [Audit Log Signing](audit-signing.md) — how signed logs are produced and verified
 - [Binding Validation](binding-validation.md) — ABI binding generation and staleness detection
+- [Byte-Stable Binding Output Verification](binding-validation.md#byte-stable-binding-output-verification---byte-verify) — deterministic generation and byte-level diff verification

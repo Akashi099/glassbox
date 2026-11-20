@@ -133,7 +133,8 @@ var secretFileExtensions = map[string]bool{
 // IsSecretFile returns true when the file at path is a known credential file
 // that must never be read or scanned by the diagnostics collector.
 func IsSecretFile(path string) bool {
-	base := strings.ToLower(filepath.Base(path))
+	normalized := strings.ReplaceAll(path, "\\", "/")
+	base := strings.ToLower(filepath.Base(normalized))
 	ext := strings.ToLower(filepath.Ext(base))
 	if secretFileExtensions[ext] {
 		return true
