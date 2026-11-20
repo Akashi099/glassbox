@@ -43,6 +43,13 @@ processes spawned during the command.
 color output independently of `--no-color`. See `docs/command-development-guide.md`
 for details on non-interactive mode.
 
+**Note:** `GLASSBOX_NO_COLOR` is resolved in `PersistentPreRunE` in
+`internal/cmd/root.go`, which sets `NO_COLOR=1` and calls
+`visualizer.SetNoColor(true)`. The `internal/terminal.ANSIRenderer` reads
+only `NO_COLOR` directly (not `GLASSBOX_NO_COLOR`), so the two-step path
+through the CLI layer is required for `GLASSBOX_NO_COLOR` to take effect.
+When using `ANSIRenderer` directly (e.g. in tests), set `NO_COLOR` instead.
+
 ## Precedence
 
 No-color sources are checked in this order (first match wins):
@@ -104,15 +111,14 @@ The script builds the binary if needed and tests both piped output and `NO_COLOR
 
 Key test files for no-color behavior:
 - `internal/cmd/no_color_test.go` — CLI flag and environment variable activation
-- `internal/visualizer/color_test.go` — Visualizer color enabling logic
 - `internal/terminal/ansi_test.go` — ANSI renderer color behavior
-- `internal/termctx/termctx_test.go` — Terminal context and non-interactive mode
+- `internal/terminal/platform_tty_test.go` — Cross-platform TTY detection (NO_COLOR, FORCE_COLOR, TERM=dumb)
 
 Run the no-color specific tests:
 
 ```bash
 go test ./internal/cmd/... -run NoColor
-go test ./internal/visualizer/... -run Color
 go test ./internal/terminal/... -run ANSI
-go test ./internal/termctx/... -run NonInteractive
+go test ./internal/terminal/... -run TTY
+go test ./internal/terminal/... -run Colorize
 ```
