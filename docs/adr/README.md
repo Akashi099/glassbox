@@ -16,8 +16,8 @@ Each ADR follows the standard format:
 
 | ADR | Title | Status | Date |
 |-----|-------|--------|------|
-| [001](001-snapshot-caching-strategy.md) | Snapshot Caching Strategy using Bincode and SHA256 | Accepted | 2026-02-26 |
-| [002](002-hsm-integration.md) | HSM Integration for Cryptographic Operations | Accepted | 2026-02-26 |
+| 001 | Snapshot Caching Strategy using Bincode and SHA256 | Accepted | 2026-02-26 |
+| 002 | HSM Integration for Cryptographic Operations | Accepted | 2026-02-26 |
 | [003](003-trust-boundaries.md) | Trust Boundaries and Component Trust Levels | Accepted | 2026-08-31 |
 | [004](004-data-classification.md) | Data Classification and Cross-Boundary Data Flows | Accepted | 2026-08-31 |
 | [005](005-canonicalization-ownership.md) | Canonicalization Ownership | Accepted | 2026-08-31 |
@@ -69,6 +69,6 @@ Each ADR follows the standard format:
 
 ## Related Documentation
 
-- [Architecture Overview](../ARCHITECTURE.md)
-- [Contributing Guidelines](../CONTRIBUTING.md)
-- [Technical Specifications](../README.md)
+- [Architecture Overview](../architecture-dataflow.md)
+- [Contributing Guidelines](../../README.md)
+- [Technical Specifications](../schema/README.md)
