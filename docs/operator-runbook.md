@@ -816,6 +816,7 @@ For reproducible offline debugging:
 
 ## See also
 
+- [Troubleshooting index — Doctor symptom-to-check mapping](./troubleshooting-index.md#doctor-symptom-to-check-mapping) — complete mapping of symptoms to `glassbox doctor` checks
 - [Debug command](./debug-command.md) — full command reference
 - [Source mapping troubleshooting](./source-mapping-troubleshooting.md) — source mapping wizard
 - [Diagnostics bundle](./diagnostics-bundle.md) — portable diagnostics
