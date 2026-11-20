@@ -144,11 +144,12 @@ glassbox config show --json | jq '.rpc_url'
    glassbox debug --rpc-url https://rpc.stellar.org --network testnet <tx-hash>
    ```
 3. **Check firewall rules** — ensure outbound HTTPS (443) is allowed.
-4. **Verify RPC token** — if using a private endpoint, confirm the token is
-   valid:
+4. **Verify RPC token** — if using a private endpoint, confirm a token is set
+   without printing any of it:
    ```sh
-   echo $GLASSBOX_RPC_TOKEN | head -c 8  # should print first 8 chars only
+   [ -n "$GLASSBOX_RPC_TOKEN" ] && echo "token set (${#GLASSBOX_RPC_TOKEN} chars)" || echo "token not set"
    ```
+   See [RPC bearer token examples](./rpc-token-examples.md).
 
 **When to escalate:** If the endpoint is reachable via `curl` but Glassbox
 cannot connect, generate a diagnostics bundle:
@@ -305,11 +306,13 @@ a misconfiguration. Generate a diagnostics bundle.
 **Evidence to collect:**
 
 ```sh
-# Check token is set (show first 8 chars only)
-echo "${GLASSBOX_RPC_TOKEN:0:8}..."
+# Check a token is set without printing any of it
+[ -n "$GLASSBOX_RPC_TOKEN" ] && echo "token set (${#GLASSBOX_RPC_TOKEN} chars)" || echo "token not set"
 
-# Verify token format (typically a JWT or opaque string)
-glassbox config show --json | jq '.rpc_token' | head -c 20
+# Check which source supplied the token (value is always "[redacted]")
+glassbox config show --json | jq '.values.rpc_token'
+# Expected: {"value": "[redacted]", "source": "environment"}  (or "file")
+# null means no token is configured from any source
 ```
 
 **Safe remediation:**
@@ -321,7 +324,9 @@ glassbox config show --json | jq '.rpc_token' | head -c 20
 
 **When to escalate:** If the token is valid for other tools but rejected by
 Glassbox, check for extra whitespace or newline characters in the environment
-variable.
+variable. Glassbox sends the value unchanged as `Authorization: Bearer <token>`.
+See [RPC bearer token examples](./rpc-token-examples.md) for safe ways to set
+and check the token.
 
 ---
 

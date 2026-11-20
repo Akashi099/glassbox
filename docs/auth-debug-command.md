@@ -34,7 +34,7 @@ glassbox auth-debug --network testnet <transaction-hash>
 | `--detailed` | `false` | Show detailed analysis, summary metrics, and missing signatures. Has no effect when combined with `--json` (JSON output already contains full detail). |
 | `--json` | `false` | Emit the authorization trace as machine-readable JSON on stdout. |
 
-The `GLASSBOX_RPC_TOKEN` environment variable (or the `rpc_token` config value) supplies the RPC authentication token.
+The `GLASSBOX_RPC_TOKEN` environment variable (or the `rpc_token` config value) supplies the RPC authentication token. Unlike `debug`, `auth-debug` has no `--rpc-token` flag; the environment variable takes precedence over the config value. See [RPC bearer token examples](./rpc-token-examples.md).
 
 ---
 
