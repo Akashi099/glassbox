@@ -135,16 +135,17 @@ When the primary RPC endpoint is unavailable, the CLI applies the configured
 
 | Strategy | Behaviour |
 |---|---|
-| `round-robin` | Cycle through `soroban_rpc_urls` list in order |
-| `first-available` | Try each URL in order, use the first that responds |
+| `weighted` | Probabilistic selection proportional to health score (default) |
+| `sticky` | Always use the single healthiest endpoint; switch only when degraded |
+| `round_robin` | Cycle through `soroban_rpc_urls` list in order |
 | (none configured) | Single URL; error immediately on failure |
 
 Failover applies to live transaction fetching and RPC submission only. It does
 not affect offline-capable operations.
 
 **Degradation is never silent.** If all RPC endpoints are unreachable, the CLI
-exits with an explicit error. The operator is not left with a partial result
-that silently omits network-fetched data.
+exits with an explicit error (`ALL_RPC_FAILED`). The operator is not left with
+a partial result that silently omits network-fetched data.
 
 ### 7. KMS provider and offline signing
 
