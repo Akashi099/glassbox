@@ -268,6 +268,8 @@ test-unused:
 	./scripts/test-unused-detection.sh
 
 # Validate CI/CD configuration
+# Checks that required workflow files, go.mod, and linter config are present,
+# and warns when the Go version in go.mod is not reflected in ci-test.yml.
 validate-ci:
 	./scripts/validate-ci.sh
 # Validate error standardization

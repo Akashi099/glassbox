@@ -1,0 +1,43 @@
+{
+  "spdxVersion": "SPDX-2.3",
+  "dataLicense": "CC0-1.0",
+  "SPDXID": "SPDXRef-DOCUMENT",
+  "name": "glassbox-v1.1.0-bad-license",
+  "documentNamespace": "https://dotandev.github.io/glassbox/sbom/v1.1.0-bad",
+  "documentHash": "deadbeefdeadbeef",
+  "packages": [
+    {
+      "SPDXID": "SPDXRef-Package-glassbox",
+      "name": "github.com/dotandev/glassbox",
+      "versionInfo": "v1.1.0",
+      "licenseDeclared": "Apache-2.0",
+      "externalRefs": []
+    },
+    {
+      "SPDXID": "SPDXRef-Package-shared-lib",
+      "name": "github.com/shared/lib",
+      "versionInfo": "v1.6.0",
+      "licenseDeclared": "MIT",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceType": "purl",
+          "referenceLocator": "pkg:golang/github.com/shared/lib@v1.6.0"
+        }
+      ]
+    },
+    {
+      "SPDXID": "SPDXRef-Package-gpl-dep",
+      "name": "github.com/evil/gpl-dep",
+      "versionInfo": "v2.0.0",
+      "licenseDeclared": "GPL-3.0",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceType": "purl",
+          "referenceLocator": "pkg:golang/github.com/evil/gpl-dep@v2.0.0"
+        }
+      ]
+    }
+  ]
+}

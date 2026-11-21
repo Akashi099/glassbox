@@ -14,8 +14,8 @@ echo "Validating CI/CD configuration..."
 echo "Project root: ${REPO_ROOT}"
 
 # Check if required files exist
-if [ ! -f ".github/workflows/ci.yml" ]; then
-    echo " CI workflow file missing"
+if [ ! -f ".github/workflows/ci-test.yml" ]; then
+    echo " CI workflow file missing (.github/workflows/ci-test.yml)"
     exit 1
 fi
 
@@ -31,14 +31,14 @@ fi
 
 # Validate go.mod version is represented in CI matrix (best-effort, non-fatal)
 GO_VERSION=$(grep "^go " go.mod | awk '{print $2}')
-if grep -q "go-version:" .github/workflows/ci.yml; then
-    if grep -q "go-version: \"${GO_VERSION}\"" .github/workflows/ci.yml; then
+if grep -q "go-version:" .github/workflows/ci-test.yml; then
+    if grep -q "go-version: \"${GO_VERSION}\"" .github/workflows/ci-test.yml; then
         echo " Go version ${GO_VERSION} is present in CI matrix"
     else
         echo " Warning: Go version mismatch between go.mod (${GO_VERSION}) and CI matrix"
     fi
 else
-    echo " Warning: No go-version entries found in .github/workflows/ci.yml"
+    echo " Warning: No go-version entries found in .github/workflows/ci-test.yml"
 fi
 
 # Check if golangci-lint config is valid YAML

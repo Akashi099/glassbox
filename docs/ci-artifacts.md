@@ -6,6 +6,70 @@ failure locally using the downloaded material.
 
 ---
 
+## SBOM generation examples
+
+A versioned SPDX 2.3 JSON SBOM is produced for every release by
+`scripts/generate-sbom.sh`, which calls the `cmd/generate-sbom` Go tool.
+
+### Generate from a clean checkout
+
+```bash
+# 1. Collect Go module metadata
+go list -m -json all > /tmp/go-modules.json
+
+# 2. Run the tool directly (requires a built binary)
+go run ./cmd/generate-sbom \
+  --version      v1.2.3 \
+  --commit       $(git rev-parse HEAD) \
+  --go-modules   /tmp/go-modules.json \
+  --cargo-lock   simulator/Cargo.lock \
+  --package-lock package-lock.json \
+  --output       dist/release/glassbox-v1.2.3.spdx.json \
+  --verify
+
+# 3. Use the shell script wrapper (handles tool build + go list automatically)
+bash scripts/generate-sbom.sh dist/release
+# → prints: dist/release/glassbox-v1.2.3.spdx.json
+```
+
+All three ecosystem inputs (`--go-modules`, `--cargo-lock`, `--package-lock`)
+are optional. The tool warns and skips any that are absent, as long as at
+least one is supplied.
+
+### Spot-check the output
+
+```bash
+# Verify spdxVersion and package count
+python3 -c "
+import json
+d = json.load(open('dist/release/glassbox-v1.2.3.spdx.json'))
+print('spdxVersion:', d['spdxVersion'])
+print('packages:',    len(d['packages']))
+print('documentHash:', d.get('documentHash', '(none)'))
+"
+# Expected: spdxVersion: SPDX-2.3
+```
+
+### SBOM diff between releases
+
+```bash
+make sbom-diff \
+  PREV_SBOM=dist/old/glassbox-v1.1.0.spdx.json \
+  NEW_SBOM=dist/release/glassbox-v1.2.3.spdx.json
+```
+
+Exits 0 when there are no policy violations. Exits 1 on prohibited or
+undeclared licenses. Pass `--format json` via `SBOM_DIFF_FORMAT=json` for
+machine-readable output.
+
+### Running the generate-sbom tests
+
+```bash
+go test -v ./cmd/generate-sbom/...
+```
+
+---
+
 ## When are artifacts uploaded?
 
 **Failure-debug artifacts** are uploaded only when a job fails. Successful

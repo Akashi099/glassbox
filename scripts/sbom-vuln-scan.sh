@@ -310,7 +310,7 @@ if [ "${FINAL_FAIL}" -gt 0 ]; then
   echo "  3. If no patch is available, add a time-limited exception to"
   echo "     license-policy.json with approved_by, reason, and expires fields."
   echo "     Rust exceptions also go in .cargo/deny.toml [advisories].ignore."
-  echo "  4. See docs/sbom.md#vulnerability-exceptions for the full process."
+  echo "  4. See docs/license-policy.md#adding-an-exception for the full process."
   exit 1
 else
   echo "Result: no vulnerability findings at ${FAIL_ON}+ severity."
