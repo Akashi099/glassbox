@@ -40,8 +40,11 @@ Run validation without regenerating (e.g. in CI):
 ```
 
 The index records each fixture's `path`, `layer`, `failure_class`, `issue_ref`,
-`schema_version`, and `test_name`.  CI fails if any fixture lacks a valid layer
-or an issue/PR reference in its filename.
+`schema_version`, and `test_name`.  The script exits non-zero if any fixture
+lacks a valid layer, lacks an issue/PR reference in its filename, or shares a
+fixture ID with another file in its layer. See
+[Naming convention](#naming-convention) for the exact rules and
+[Known baseline](#known-baseline) for the current state of `main`.
 
 ---
 
@@ -72,21 +75,86 @@ Every fixture file follows:
 Where:
 
 - `<layer>` — one of: `rpc`, `replay`, `trace`, `sourcemap`, `session`,
-  `audit`, `cli`
+  `audit`, `cli`. It must match the subdirectory the file lives in.
 - `<scenario-slug>` — short snake_case description of the failure class being
   reproduced (e.g. `budget_exhaustion`, `missing_footprint`, `empty_events`)
-- `<issue-or-pr-slug>` — optional GitHub issue / PR number or short slug that
-  links the fixture to the original report (e.g. `issue234`, `pr_401`)
-- `<ext>` — file extension appropriate for the content type
+- `<issue-or-pr-slug>` — **required**. Write it as `issue<N>` or `pr<N>`, where
+  `<N>` is the GitHub number in digits with no separator (e.g. `issue234`,
+  `pr401`).
+- `<ext>` — file extension appropriate for the content type. Compound
+  extensions such as `.trace.json` or `.expected.txt` are allowed.
+
+### How the index script applies these rules
+
+`scripts/index_regression_fixtures.sh` is the only automated check on fixture
+names. This is what it actually enforces:
+
+| Rule | Enforced? | Detail |
+|------|-----------|--------|
+| File lives in a valid layer directory | Yes (fail) | Other directories are skipped with a `[WARN]` |
+| Issue/PR reference present | Yes (fail) | Matched by the regex `(?:issue\|pr)(\d+)`, case-insensitive. A missing reference prints `[WARN]` but **counts as a failure** |
+| Unique fixture ID per layer | Yes (fail) | The ID is the filename with **every** extension removed. `foo_issue1.env.json` and `foo_issue1.expected.txt` both become `foo_issue1` and collide |
+| `<layer>_` filename prefix | No | Not checked. Use the prefix anyway |
+| `README.md` | Exempt | Ignored in every layer directory |
+
+Things this implies:
+
+- `pr_401`, `pr_offline`, and `issue-234` do **not** match the regex. Leave
+  out the separator: `pr401`, `issue234`.
+- A fixture with no GitHub number cannot pass the check. Use the number of the
+  issue or PR that adds the fixture.
+- Companion files for the same scenario (input plus expected output) need
+  distinct stems, for example `cli_format_yaml_issue230_env.json` and
+  `cli_format_yaml_issue230_expected.txt`.
 
 Examples:
 
+| Filename | Result | Reason |
+|----------|--------|--------|
+| `rpc_gettransaction_notfound_issue150.json` | pass | Layer prefix, slug, `issue150` |
+| `trace_empty_steps_pr319.trace.json` | pass | `pr319` matches; compound extension is fine |
+| `audit_empty_payload_rejected.payload.json` | **fail** | No issue/PR reference |
+| `rpc_sendtransaction_internal_error_pr_offline.json` | **fail** | `pr_offline` has no digits |
+| `cli_format_yaml_rejected_issue230.env.json` + `cli_format_yaml_rejected_issue230.expected.txt` | **fail** | Both reduce to the ID `cli_format_yaml_rejected_issue230` |
+| `gethealth_truncated_missing_status.json` | **fail** | No reference (and no `rpc_` prefix, which is not checked) |
+
+Every **fail** row is a file that is currently checked in. See
+[Known baseline](#known-baseline).
+
+### Checking names
+
+From the repository root (requires `bash` and `python3`):
+
+```bash
+./scripts/index_regression_fixtures.sh --check-only
 ```
-rpc_gettransaction_notfound_issue150.json
-trace_deprecated_host_fn_pr319.trace.json
-audit_empty_payload_rejected.payload.json
-cli_debug_invalid_hash_error_message.expected.txt
-```
+
+This prints `[OK]   All fixture index checks passed.` and exits 0 when
+everything passes. When anything fails it prints one
+`[WARN]`/`[FAIL]` line per problem and a summary such as `[FAIL] 45 check(s) failed.`,
+then exits 1.
+
+### Known baseline
+
+On current `main`, `--check-only` exits 1 with `45 check(s) failed.` This
+failure is pre-existing and does not come from any single new fixture. It
+breaks down as:
+
+- 15 fixtures have no issue/PR reference: all 13 `rpc/` RPC-shape fixtures
+  (`gethealth_*`, `getlatestledger_*`, `getledgerentries_*`,
+  `simulatetransaction_*`, `error_object_empty_message.json`),
+  `rpc_sendtransaction_internal_error_pr_offline.json`, and
+  `audit_empty_payload_rejected.payload.json`.
+- 1 duplicate ID: the two `cli_format_yaml_rejected_issue230.*` files.
+- 29 index mismatches. The committed `fixture_index.json` is hand-written and
+  out of sync with the script. It lists 8 of 21 fixtures, uses
+  `fixtures/...` paths where the script emits `test/regression/fixtures/...`,
+  stores Go test function names in `test_name` (the script stores the
+  filename stem), and has no `schema_version`. Regenerating with the script
+  would replace those `test_name` values.
+
+When you add a fixture, compare the failure count before and after your
+change. Your fixture should add no new `[WARN]` or `[FAIL]` lines.
 
 ---
 
@@ -146,7 +214,7 @@ following section in the issue body:
 ## Regression fixture
 
 - **Fixture directory**: `test/regression/fixtures/<layer>/`
-- **Suggested filename**: `<layer>_<scenario>_issue<N>.<ext>`
+- **Suggested filename**: `<layer>_<scenario>_issue<N>.<ext>` (digits only after `issue`/`pr`, no separator)
 - **Failure class**: <one-line description of the class>
 - **Canonical input**: paste a minimal JSON / shell snippet here
 ```

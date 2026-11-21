@@ -77,14 +77,83 @@ Go and Jest conformance suites compare the computed digest against the stored
 
 ### Invalid cases
 
-Cases in the `invalid` array must be **rejected** by both runtimes before
-serialisation:
+Cases in the `invalid` array describe inputs that must be **rejected** before
+serialisation. They have only `id`, `description`, and `notes`. There is no
+`input`, because none of these values can be written as JSON.
 
-| Case ID | Reason |
-|---|---|
-| `nan-value` | NaN cannot be expressed in JSON |
-| `infinity-value` | Infinity cannot be expressed in JSON |
-| `circular-reference` | Circular references cannot be serialised |
+| Case ID | Reason | What the tests actually assert |
+|---|---|---|
+| `nan-value` | NaN cannot be expressed in JSON | Go: none (rejected by `validateCanonicalNumber` in `canonical.go`, but no corpus-driven test). TS: `stringify({value: NaN})` returns `{"value":null}`, so rejection is the application layer's job |
+| `infinity-value` | Infinity cannot be expressed in JSON | Go: none (same as above). TS: `stringify({value: Infinity})` returns `{"value":null}` |
+| `circular-reference` | Circular references cannot be serialised | Go: none. TS: `stringify` throws |
+
+Neither test suite loops over the `invalid` array. The TypeScript tests for
+these three cases are hand-written. If you add an entry to `invalid`, you must
+also add a matching hand-written test in each runtime, or nothing exercises it.
+
+### Fixture index rules
+
+The two tables above are the index of every fixture in `corpus.json`. Keep
+them complete:
+
+- Every `id` in `cases` and `invalid` appears in exactly one table row, in
+  corpus order.
+- `id` values are unique across `cases` and `invalid`.
+- Every `sha256` is the SHA-256 of the UTF-8 bytes of `canonical`.
+- `canonical` equals `input` with keys sorted, no whitespace, and non-ASCII
+  characters left unescaped.
+
+#### Checking the index without a Go or Node toolchain
+
+The command below needs only `python3`. Run it from the repository root. It
+checks all four rules and works even when the Go or Jest suites cannot run:
+
+```bash
+python3 - <<'EOF'
+import hashlib, json, re, sys
+c = json.load(open("testdata/canonical-conformance/corpus.json", encoding="utf-8"))
+doc = open("docs/canonical-conformance.md", encoding="utf-8").read()
+doc = doc.split("## What the corpus covers", 1)[1].split("### Fixture index rules", 1)[0]
+errors = []
+ids = [x["id"] for x in c["cases"] + c["invalid"]]
+for d in sorted({i for i in ids if ids.count(i) > 1}):
+    errors.append(f"duplicate id: {d}")
+for x in c["cases"]:
+    want = json.dumps(x["input"], sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+    if want != x["canonical"]:
+        errors.append(f"{x['id']}: canonical does not match input")
+    if hashlib.sha256(x["canonical"].encode("utf-8")).hexdigest() != x["sha256"]:
+        errors.append(f"{x['id']}: sha256 does not match canonical")
+indexed = set(re.findall(r"^\| `([a-z0-9-]+)` \|", doc, re.M))
+for i in ids:
+    if i not in indexed:
+        errors.append(f"{i}: missing from docs/canonical-conformance.md tables")
+for i in sorted(indexed - set(ids)):
+    errors.append(f"{i}: listed in docs but not in corpus.json")
+print("\n".join(errors) or f"OK: {len(c['cases'])} cases, {len(c['invalid'])} invalid, index complete")
+sys.exit(1 if errors else 0)
+EOF
+```
+
+Expected output on a clean checkout (exit code 0):
+
+```
+OK: 16 cases, 3 invalid, index complete
+```
+
+Failure example: if you add a case with `"sha256": "placeholder"` and leave it
+out of the table, the command exits 1 and prints:
+
+```
+my-new-case: sha256 does not match canonical
+my-new-case: missing from docs/canonical-conformance.md tables
+```
+
+The `input` check uses Python's `sort_keys`, which sorts by code point and
+matches Go's `canonicalJSON` for every current case. One known gap is
+Unicode normalisation: Go also applies NFC to strings and TypeScript does not.
+A case that relies on NFC needs a hand-written `canonical` value and a note in
+its `notes` field.
 
 ## Running the conformance suite
 
@@ -98,7 +167,17 @@ go test ./internal/cmd/... -run TestCanonicalConformance -v
 go test ./internal/cmd/... -run TestCanonicalConformance_CorpusIntegrity -v
 ```
 
+> **Known baseline (pre-existing, unrelated to the corpus):** on current `main`,
+> `go test ./internal/cmd/...` reports `[build failed]`. The cause is compile
+> errors in packages it imports (`internal/demangle`, `internal/cache`,
+> `internal/decoder`, `internal/snapshot`, `internal/deterministic`). Until
+> those are fixed, use the
+> [index check](#checking-the-index-without-a-go-or-node-toolchain) to
+> validate corpus edits.
+
 ### TypeScript / Jest
+
+Run `npm ci` first. Jest is not available until `node_modules/` is installed.
 
 ```bash
 # Run only the conformance tests
@@ -138,14 +217,23 @@ Example failure:
 
 1. Add a new entry to the `cases` array in `testdata/canonical-conformance/corpus.json`.
 2. Set `sha256` to `"placeholder"` initially.
-3. Run the corpus integrity test to get the correct hash:
+3. Compute the full hash of your `canonical` string (replace `my-new-case`
+   with your case's `id`):
    ```bash
-   go test ./internal/cmd/... -run TestCanonicalConformance_CorpusIntegrity -v 2>&1 | grep "recomputed"
+   python3 -c 'import json,hashlib,sys; c=json.load(open("testdata/canonical-conformance/corpus.json",encoding="utf-8")); print(next(hashlib.sha256(x["canonical"].encode()).hexdigest() for x in c["cases"] if x["id"]==sys.argv[1]))' my-new-case
    ```
+   The test suites cannot give you this value. `TestCanonicalConformance_CorpusIntegrity`
+   **skips** any case whose `sha256` is `""` or `"placeholder"`, and on a
+   mismatch every test prints only the first 16 hex characters (`safeHash`).
 4. Update the `sha256` field with the printed value.
-5. Run both test suites to confirm the new fixture passes.
+5. Add a row for the new `id` to the table in [What the corpus covers](#what-the-corpus-covers).
+6. Run the [index check](#checking-the-index-without-a-go-or-node-toolchain),
+   then both test suites, to confirm the new fixture passes.
 
-Do **not** duplicate a fixture `id`. The tests will fail on duplicate IDs.
+Do **not** duplicate a fixture `id`. The test suites do **not** detect
+duplicates: Go's `t.Run` renames the second one to `<id>#01`, and Jest accepts
+repeated test names. The index check above is the only thing that catches a
+duplicate.
 
 ## Canonicalization implementations
 

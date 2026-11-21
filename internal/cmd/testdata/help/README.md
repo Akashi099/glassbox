@@ -34,3 +34,6 @@ Covered commands (one `.txt` file each):
 - `completion.txt` — `glassbox completion --help`
 - `diagnostics.txt` — `glassbox diagnostics --help`
 - `doctor.txt` — `glassbox doctor --help`
+
+For all golden/snapshot sets, the flags each one uses, and the review steps, see the
+[golden output refresh checklist](../../../../docs/printer-golden-tests.md#golden-output-refresh-checklist).

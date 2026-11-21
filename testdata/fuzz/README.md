@@ -8,6 +8,11 @@ Fuzz testing is a security testing technique that automatically generates malfor
 
 ## Fuzz Targets
 
+The targets below are defined in non-`_test.go` files. Go does not discover
+them, so `go test -fuzz=<name>` fuzzes nothing for them. Check with
+`go test -list '^Fuzz' ./<package>/` and see
+[TRIAGE.md — Which targets go test can actually run](TRIAGE.md#which-targets-go-test-can-actually-run).
+
 The following fuzz targets are currently implemented:
 
 ### XDR Decoder (`internal/simulator/xdr_decoder_fuzz.go`)
@@ -89,42 +94,55 @@ go test -fuzz=. ./internal/simulator/
 ### Corpus Structure
 
 ```
-testdata/fuzz/
-├── corpus/
-│   ├── xdr_decoder/
-│   │   ├── README.md
-│   │   ├── valid_envelope.b64
-│   │   ├── minimal_xdr.bin
-│   │   └── ...
-│   ├── decoder/
-│   ├── trace/
-│   ├── session/
-│   ├── wasm/
-│   └── certificate/
-└── TRIAGE.md
+testdata/fuzz/                      ← reference only; NOT loaded by go test
+├── README.md
+├── TRIAGE.md
+└── corpus/
+    ├── certificate/   README.md
+    ├── decoder/       README.md
+    ├── deeplink/      README.md
+    ├── demangle/      README.md + *.bin reference seeds
+    ├── dwarf/         README.md
+    ├── ipc/           README.md
+    ├── manifest/      README.md
+    ├── session/       README.md
+    ├── trace/         README.md
+    ├── wasm/          README.md
+    └── xdr_decoder/   README.md
+
+<package>/testdata/fuzz/<FuzzTargetName>/   ← executable corpus, read by go test
 ```
+
+Go loads seed and crash inputs only from the **package-relative** directory,
+for example `internal/ipc/testdata/fuzz/FuzzUnmarshalSimulationRequest/`.
+Files under the repo-root `testdata/fuzz/corpus/` document the input space,
+but no test reads them.
 
 ### Adding Seed Inputs
 
-To add new seed inputs to the corpus:
+Use one of these approaches:
 
-1. Place the input file in the appropriate corpus directory
-2. Run the fuzzer to incorporate it:
-   ```bash
-   go test -fuzz=FuzzTargetName -fuzztime=30s ./path/to/package
+1. Add `f.Add(...)` calls in the fuzz target. This is the preferred option
+   for small, readable seeds.
+2. Commit a corpus file to `<package>/testdata/fuzz/<FuzzTargetName>/`. It
+   must start with the line `go test fuzz v1` and contain one Go literal per
+   fuzz argument, for example:
    ```
-3. The fuzzer will automatically minimize and add interesting inputs to the corpus
+   go test fuzz v1
+   []byte("{\"version\":1}")
+   ```
+
+Plain `go test ./path/to/package` runs every seed. The fuzzer does **not**
+copy interesting inputs it discovers into the repository. It caches them under
+`$(go env GOCACHE)/fuzz/`, and only a failing input is written to the package
+`testdata/fuzz/` directory.
 
 ### Regression Inputs
 
-When a crash is found and fixed, add the crash input to the corpus to prevent regression:
-
-```bash
-# Copy the crash input to the corpus
-cp <crash_input> testdata/fuzz/corpus/<target>/regression_<issue>.bin
-
-# Document the fix in the corpus README
-```
+When a crash is found and fixed, commit the failing input from
+`<package>/testdata/fuzz/<FuzzTargetName>/` and record it in the matching
+`testdata/fuzz/corpus/<area>/README.md`. For the full procedure, see
+[TRIAGE.md — Fixture maintenance](TRIAGE.md#fixture-maintenance).
 
 ## CI Integration
 

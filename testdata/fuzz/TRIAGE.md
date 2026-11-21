@@ -6,34 +6,43 @@ This document provides instructions for triaging fuzz test failures, crashes, an
 
 ### When a Crash is Detected
 
-1. **Reproduce the Crash**
+1. **Locate the Crash Input**
+
+   When `go test -fuzz` finds a failure, it minimizes the input
+   **automatically** before stopping. It then writes the result to
+   `testdata/fuzz/<FuzzTargetName>/<hash>` inside the **package directory**,
+   not the repository root. For example:
    ```bash
-   # Run the specific fuzz target with the crashing input
-   go test -fuzz=FuzzTargetName -fuzztime=30s ./path/to/package
+   ls internal/ipc/testdata/fuzz/FuzzUnmarshalSimulationRequest/
+   ```
+   The fuzzer's last lines name the file and print the exact command to
+   re-run it:
+   ```
+   Failing input written to testdata/fuzz/FuzzUnmarshalSimulationRequest/<hash>
+   To re-run:
+   go test -run=FuzzUnmarshalSimulationRequest/<hash>
    ```
 
-2. **Minimize the Input**
+2. **Reproduce the Crash** (deterministic; no fuzzing engine)
    ```bash
-   # Use the fuzzer's built-in minimization
-   go test -fuzz=FuzzTargetName -fuzztime=30s ./path/to/package
-   
-   # The minimized input will be in testdata/fuzz/FuzzTargetName/
+   go test -run='^FuzzTargetName$/<hash>' -v ./path/to/package
    ```
+   This fails with the same panic or `t.Fatal` every time. Running
+   `-fuzz` again is **not** a reliable way to reproduce, because the engine
+   may never hit the same input.
 
-3. **Extract the Crash Input**
-   ```bash
-   # The fuzzer saves crashing inputs to the corpus directory
-   ls testdata/fuzz/FuzzTargetName/
-   ```
+3. **Keep the Crash Input**
 
-4. **Create a Reproducible Test Case**
-   ```bash
-   # Add the minimized input as a seed
-   cp <crash_input> testdata/fuzz/corpus/<target>/<descriptive_name>
-   
-   # Add a unit test to prevent regression
-   # See: testdata/fuzz/REGRESSION_TEST_TEMPLATE.md
-   ```
+   The `<hash>` file is a Go corpus file. It starts with a
+   `go test fuzz v1` line followed by one Go literal per fuzz argument. Commit
+   it in place: plain `go test ./path/to/package` runs every file under
+   `testdata/fuzz/<FuzzTargetName>/` as a regression case without fuzzing.
+   See [Fixture maintenance](#fixture-maintenance).
+
+4. **Add a Named Regression Test** (optional but recommended)
+
+   Write a `TestRegression_*` that decodes the same bytes, as shown in
+   [Adding Regression Tests](#adding-regression-tests).
 
 5. **Analyze the Root Cause**
    - Review the stack trace
@@ -49,12 +58,14 @@ This document provides instructions for triaging fuzz test failures, crashes, an
 
 7. **Verify the Fix**
    ```bash
-   # Re-run the fuzzer with the crash input
-   go test -fuzz=FuzzTargetName -fuzztime=30s ./path/to/package
-   
-   # Run the full fuzz suite
-   make test-fuzz
+   # The committed crash input must now pass
+   go test -run='^FuzzTargetName$' -v ./path/to/package
+
+   # Then fuzz again briefly to check the fix did not move the crash
+   go test -run='^$' -fuzz='^FuzzTargetName$' -fuzztime=30s ./path/to/package
    ```
+   There is no `make test-fuzz` target. CI runs the per-target commands in
+   `.github/workflows/fuzz.yml`.
 
 ### Crash Classification
 
@@ -139,19 +150,78 @@ func TestRegression_Crash_IssueXXX(t *testing.T) {
 
 ### Updating the Corpus
 
-1. **Add Crash Inputs to Corpus**
+See [Fixture maintenance](#fixture-maintenance) below.
+
+## Fixture maintenance
+
+### Two different corpus locations
+
+| Location | Read by `go test`? | Purpose |
+|----------|--------------------|---------|
+| `<package>/testdata/fuzz/<FuzzTargetName>/<file>` | **Yes**. Every file runs as a seed during `go test`, and during `-fuzz` | Executable regression inputs. Crash inputs go here |
+| `testdata/fuzz/corpus/<area>/` (repo root) | **No**. No Go code loads this directory | Human-readable reference seeds and per-area `README.md` notes |
+
+A file copied into `testdata/fuzz/corpus/<area>/` is never executed. To keep a
+crash from regressing, the file must stay in the package-relative directory.
+
+### Adding a crash input as a fixture
+
+1. Leave the fuzzer's `<hash>` file where it was written:
+   `<package>/testdata/fuzz/<FuzzTargetName>/<hash>`. You may rename it to a
+   descriptive name such as `issue1234_truncated_header`. Go reads every file
+   in that directory, whatever its name.
+2. Confirm it is in valid corpus format. The first line must be exactly
+   `go test fuzz v1`:
    ```bash
-   cp <crash_input> testdata/fuzz/corpus/<target>/regression_<issue>.bin
+   head -1 internal/ipc/testdata/fuzz/FuzzUnmarshalSimulationRequest/issue1234_truncated_header
    ```
+3. Confirm it fails **before** the fix and passes **after** it:
+   ```bash
+   go test -run='^FuzzUnmarshalSimulationRequest$' -v ./internal/ipc/
+   ```
+   Before the fix this ends in `--- FAIL: FuzzUnmarshalSimulationRequest/issue1234_truncated_header`
+   and `FAIL`. After the fix it ends in `ok  github.com/dotandev/glassbox/internal/ipc`.
+4. Add a line to the matching `testdata/fuzz/corpus/<area>/README.md`. Give
+   the file path, the issue number, and a one-line description of the
+   failure class.
+5. Commit the corpus file, the fix, and the README line together.
 
-2. **Document the Fix**
-   - Add a comment in the corpus README
-   - Reference the issue number
-   - Describe the vulnerability
+Before committing, check that the input contains no secrets, real keys, or
+real transaction data. Fuzz inputs are committed verbatim.
 
-3. **Version the Corpus**
-   - Tag the corpus directory with the fix version
-   - Maintain a changelog in the corpus README
+### Which targets `go test` can actually run
+
+Go only discovers `Fuzz*` functions in `_test.go` files. The following files
+define fuzz targets in **non-test** files, so `go test -list '^Fuzz'` does not
+show them and `go test -fuzz=<name>` has nothing to fuzz:
+
+- `internal/simulator/xdr_decoder_fuzz.go`
+- `internal/decoder/decoder_fuzz.go`
+- `internal/trace/event_decoder_fuzz.go`
+- `internal/session/archive_fuzz.go`
+- `internal/abi/wasm_fuzz.go`
+- `internal/cmd/audit_verify_fuzz.go`
+- `internal/demangle/demangle_fuzz.go`
+
+Before you triage or add a fixture, check that the target is discoverable:
+
+```bash
+go test -list '^Fuzz' ./internal/ipc/
+```
+
+For a discoverable package this prints the target names and then `ok`, for
+example `FuzzUnmarshalSimulationRequest`. For `./internal/abi/` it prints only
+`ok`, with no names.
+
+**Known baseline (pre-existing):** in `.github/workflows/fuzz.yml`, each fuzz
+command ends in `|| true`, and a job fails only if its output log contains
+the word `crash`. That means CI jobs for undiscoverable targets pass without
+fuzzing anything. Separately, `internal/decoder`, `internal/trace`,
+`internal/session`, and `internal/cmd` do not currently build. Their fuzz jobs
+report `[build failed]`, which the `crash` grep does not catch. Packages
+whose targets are discoverable and build today include `internal/ipc`,
+`internal/dwarf`, `internal/wasmvalidate`, and `internal/simulator` (only
+`FuzzFootprintDecode`).
 
 ## CI Integration
 
@@ -165,9 +235,11 @@ When CI reports a fuzz failure:
 
 2. **Reproduce Locally**
    ```bash
-   # Use the exact corpus from CI
-   cp -r <ci_corpus> testdata/fuzz/FuzzTargetName/
-   go test -fuzz=FuzzTargetName -fuzztime=30s ./path/to/package
+   # CI artifacts hold the output log and profiles. If a crash file is
+   # included, copy it into the package-relative corpus directory
+   mkdir -p path/to/package/testdata/fuzz/FuzzTargetName/
+   cp <ci_crash_file> path/to/package/testdata/fuzz/FuzzTargetName/
+   go test -run='^FuzzTargetName$' -v ./path/to/package
    ```
 
 3. **Triage Following the Steps Above**
@@ -191,11 +263,11 @@ When CI reports a fuzz failure:
 
 ### Reproduction
 ```bash
-go test -fuzz=FuzzTargetName -fuzztime=30s ./path/to/package
+go test -run='^FuzzTargetName$/<hash>' -v ./path/to/package
 ```
 
 ### Crash Input
-Attached: crash_input.bin
+Committed at: path/to/package/testdata/fuzz/FuzzTargetName/<hash>
 
 ### Stack Trace
 ```
